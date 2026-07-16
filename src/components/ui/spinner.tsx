@@ -1,7 +1,7 @@
 import { ActivityIndicator, View } from "react-native";
 
-import { colors } from "@/constants/theme";
 import { cn } from "@/lib/cn";
+import { useThemeColors } from "@/stores/theme";
 
 import { AppText } from "./text";
 
@@ -19,6 +19,7 @@ export function LoadingSpinner({
   size = "large",
   className,
 }: LoadingSpinnerProps) {
+  const colors = useThemeColors();
   return (
     <View
       className={cn(

@@ -2,8 +2,8 @@ import type { LucideIcon } from "lucide-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
-import { colors } from "@/constants/theme";
 import { cn } from "@/lib/cn";
+import { useThemeColors } from "@/stores/theme";
 
 import { AppText } from "./text";
 
@@ -23,6 +23,7 @@ export function EmptyState({
   action,
   className,
 }: EmptyStateProps) {
+  const colors = useThemeColors();
   return (
     <View className={cn("items-center px-8 py-12", className)}>
       {Icon ? (

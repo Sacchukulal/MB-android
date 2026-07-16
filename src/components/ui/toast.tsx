@@ -10,7 +10,8 @@ import {
 import { Animated, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors } from "@/constants/theme";
+import type { Palette } from "@/constants/theme";
+import { useThemeColors } from "@/stores/theme";
 
 import { AppText } from "./text";
 
@@ -31,7 +32,7 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
-const toneIcon = (tone: ToastTone) => {
+const toneIcon = (tone: ToastTone, colors: Palette) => {
   switch (tone) {
     case "success":
       return <CheckCircle2 size={18} color={colors.success} />;
@@ -43,6 +44,7 @@ const toneIcon = (tone: ToastTone) => {
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const colors = useThemeColors();
   const [toast, setToast] = useState<ToastState | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,7 +93,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             ],
           }}>
           <View className="flex-row items-center gap-2.5 rounded-2xl border border-line-strong bg-surface-2 px-4 py-3.5 shadow-lg">
-            {toneIcon(toast.tone)}
+            {toneIcon(toast.tone, colors)}
             <AppText className="flex-1 font-sans-medium text-sm">
               {toast.message}
             </AppText>

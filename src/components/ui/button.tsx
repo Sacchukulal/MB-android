@@ -8,8 +8,8 @@ import {
   type PressableProps,
 } from "react-native";
 
-import { colors } from "@/constants/theme";
 import { cn } from "@/lib/cn";
+import { useThemeColors } from "@/stores/theme";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
@@ -46,6 +46,7 @@ export function Button({
   className,
   ...props
 }: ButtonProps) {
+  const colors = useThemeColors();
   const isDisabled = disabled || loading;
 
   const label = (pressed: boolean) => (
@@ -89,7 +90,7 @@ export function Button({
             colors={
               pressed
                 ? [colors.accentDeep, colors.accentDeep]
-                : [colors.accentBright, colors.accent]
+                : [colors.accentBright, colors.accentDeep]
             }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}

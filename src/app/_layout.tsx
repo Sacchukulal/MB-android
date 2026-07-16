@@ -6,29 +6,35 @@ import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
 import { Inter_800ExtraBold } from "@expo-google-fonts/inter/800ExtraBold";
 import { useFonts } from "expo-font";
-import { DarkTheme, Stack, ThemeProvider } from "expo-router";
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
+import { View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ToastProvider } from "@/components/ui";
-import { colors } from "@/constants/theme";
+import { palettes, themeVars, type ThemeMode } from "@/constants/theme";
+import { useTheme } from "@/stores/theme";
 
 SplashScreen.preventAutoHideAsync();
 
-const appTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    primary: colors.accentBright,
-    background: colors.bg,
-    card: colors.surface,
-    text: colors.text,
-    border: colors.lineStrong,
-    notification: colors.accent,
-  },
-};
+function navTheme(mode: ThemeMode) {
+  const base = mode === "dark" ? DarkTheme : DefaultTheme;
+  const p = palettes[mode];
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: p.accentBright,
+      background: p.bg,
+      card: p.surface,
+      text: p.text,
+      border: p.lineStrong,
+      notification: p.accent,
+    },
+  };
+}
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -38,26 +44,37 @@ export default function RootLayout() {
     Inter_700Bold,
     Inter_800ExtraBold,
   });
+  const mode = useTheme((s) => s.mode);
+  const themeHydrated = useTheme((s) => s.hydrated);
+  const hydrateTheme = useTheme((s) => s.hydrate);
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    hydrateTheme();
+  }, [hydrateTheme]);
 
-  if (!fontsLoaded) return null;
+  const ready = fontsLoaded && themeHydrated;
+
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
+
+  if (!ready) return null;
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={appTheme}>
-        <ToastProvider>
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.bg },
-              animation: "fade_from_bottom",
-            }}
-          />
-        </ToastProvider>
+      <ThemeProvider value={navTheme(mode)}>
+        <View style={themeVars[mode]} className="flex-1 bg-bg">
+          <ToastProvider>
+            <StatusBar style={mode === "dark" ? "light" : "dark"} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: palettes[mode].bg },
+                animation: "fade_from_bottom",
+              }}
+            />
+          </ToastProvider>
+        </View>
       </ThemeProvider>
     </SafeAreaProvider>
   );

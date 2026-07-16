@@ -6,12 +6,14 @@ import { Image } from "expo-image";
 import {
   BarChart3,
   IndianRupee,
+  Moon,
   Plus,
   Receipt,
+  Sun,
   Users,
 } from "lucide-react-native";
 import { useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -27,7 +29,8 @@ import {
   LoadingSpinner,
   useToast,
 } from "@/components/ui";
-import { colors } from "@/constants/theme";
+import type { Palette } from "@/constants/theme";
+import { useTheme, useThemeColors } from "@/stores/theme";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -40,7 +43,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-const swatches: Array<{ name: string; color: string }> = [
+const swatches = (colors: Palette): Array<{ name: string; color: string }> => [
   { name: "bg", color: colors.bg },
   { name: "surface", color: colors.surface },
   { name: "surface-2", color: colors.surface2 },
@@ -56,6 +59,9 @@ const swatches: Array<{ name: string; color: string }> = [
 export default function DesignGallery() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const colors = useThemeColors();
+  const mode = useTheme((s) => s.mode);
+  const toggleTheme = useTheme((s) => s.toggle);
   const [modalOpen, setModalOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -76,15 +82,26 @@ export default function DesignGallery() {
           style={{ width: 56, height: 56 }}
           contentFit="contain"
         />
-        <View>
+        <View className="flex-1">
           <AppText variant="title">Magic Bill</AppText>
           <AppText variant="caption">Design system — Phase A review</AppText>
         </View>
+        <Pressable
+          onPress={toggleTheme}
+          accessibilityLabel="Toggle light/dark theme"
+          className="h-11 w-11 items-center justify-center rounded-full border border-line-strong bg-surface"
+          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+          {mode === "dark" ? (
+            <Sun size={20} color={colors.warning} />
+          ) : (
+            <Moon size={20} color={colors.indigo} />
+          )}
+        </Pressable>
       </View>
 
       <Section title="Colors">
         <View className="flex-row flex-wrap gap-3">
-          {swatches.map((s) => (
+          {swatches(colors).map((s) => (
             <View key={s.name} className="items-center gap-1.5">
               <View
                 className="h-14 w-14 rounded-xl border border-line-strong"

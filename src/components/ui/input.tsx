@@ -7,8 +7,8 @@ import {
   type TextInputProps,
 } from "react-native";
 
-import { colors } from "@/constants/theme";
 import { cn } from "@/lib/cn";
+import { useThemeColors } from "@/stores/theme";
 
 import { AppText } from "./text";
 
@@ -30,6 +30,7 @@ export function Input({
   className,
   ...props
 }: InputProps) {
+  const colors = useThemeColors();
   const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(secureTextEntry ?? false);
 

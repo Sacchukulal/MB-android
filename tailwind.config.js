@@ -1,6 +1,11 @@
 /** @type {import('tailwindcss').Config} */
-// Magic Bill design tokens — mirrors MB-website/src/app/globals.css.
-// Committed dark theme: deep navy base + teal/emerald accent.
+// Magic Bill design tokens — dual theme via CSS variables.
+// The variables are set per-theme at the app root (see constants/theme.ts
+// `themeVars`); :root below carries dark-theme defaults as a fallback.
+// Values mirror MB-website/src/app/globals.css.
+
+const c = (name) => `rgb(var(${name}) / <alpha-value>)`;
+
 module.exports = {
   content: ["./src/**/*.{js,jsx,ts,tsx}"],
   presets: [require("nativewind/preset")],
@@ -8,35 +13,35 @@ module.exports = {
     extend: {
       colors: {
         bg: {
-          DEFAULT: "#0b1220", // page background
-          deep: "#070d18", // recessed areas
+          DEFAULT: c("--c-bg"), // page background
+          deep: c("--c-bg-deep"), // recessed areas
         },
         surface: {
-          DEFAULT: "#111a2c", // cards
-          2: "#18233a", // raised / pressed surfaces
+          DEFAULT: c("--c-surface"), // cards
+          2: c("--c-surface-2"), // raised / pressed surfaces
         },
         line: {
-          DEFAULT: "rgba(148, 163, 184, 0.14)", // hairline borders
-          strong: "rgba(148, 163, 184, 0.28)",
+          DEFAULT: "var(--c-line)", // hairline borders (alpha baked in)
+          strong: "var(--c-line-strong)",
         },
         ink: {
-          DEFAULT: "#e8eef7",
-          muted: "#94a3b8",
-          faint: "#64748b",
+          DEFAULT: c("--c-ink"),
+          muted: c("--c-ink-muted"),
+          faint: c("--c-ink-faint"),
         },
         accent: {
-          DEFAULT: "#14b8a6", // teal-500
-          bright: "#2dd4bf", // teal-400 — links, highlights
-          deep: "#0d9488", // teal-600 — gradients, hover
-          soft: "rgba(45, 212, 191, 0.12)", // tinted chips
+          DEFAULT: c("--c-accent"),
+          bright: c("--c-accent-bright"),
+          deep: c("--c-accent-deep"),
+          soft: "var(--c-accent-soft)", // tinted chips (alpha baked in)
         },
         brand: {
-          indigo: "#4f46e5", // logo indigo, used sparingly
+          indigo: c("--c-indigo"),
         },
-        success: "#34d399",
-        warning: "#fbbf24",
-        danger: "#f87171",
-        info: "#60a5fa",
+        success: c("--c-success"),
+        warning: c("--c-warning"),
+        danger: c("--c-danger"),
+        info: c("--c-info"),
       },
       fontFamily: {
         sans: ["Inter_400Regular"],
@@ -51,5 +56,30 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Dark-theme defaults so styles resolve even outside the themed root.
+    ({ addBase }) =>
+      addBase({
+        ":root": {
+          "--c-bg": "11 18 32",
+          "--c-bg-deep": "7 13 24",
+          "--c-surface": "17 26 44",
+          "--c-surface-2": "24 35 58",
+          "--c-ink": "232 238 247",
+          "--c-ink-muted": "148 163 184",
+          "--c-ink-faint": "100 116 139",
+          "--c-accent": "20 184 166",
+          "--c-accent-bright": "45 212 191",
+          "--c-accent-deep": "13 148 136",
+          "--c-indigo": "79 70 229",
+          "--c-success": "52 211 153",
+          "--c-warning": "251 191 36",
+          "--c-danger": "248 113 113",
+          "--c-info": "96 165 250",
+          "--c-line": "rgba(148, 163, 184, 0.14)",
+          "--c-line-strong": "rgba(148, 163, 184, 0.28)",
+          "--c-accent-soft": "rgba(45, 212, 191, 0.12)",
+        },
+      }),
+  ],
 };

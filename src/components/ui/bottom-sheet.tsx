@@ -11,6 +11,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { themeVars } from "@/constants/theme";
+import { useTheme } from "@/stores/theme";
+
 import { AppText } from "./text";
 
 export interface BottomSheetProps {
@@ -29,6 +32,7 @@ export function BottomSheet({
   children,
   maxHeightRatio = 0.85,
 }: BottomSheetProps) {
+  const mode = useTheme((s) => s.mode);
   const screenH = Dimensions.get("window").height;
   const translateY = useRef(new Animated.Value(screenH)).current;
   const insets = useSafeAreaInsets();
@@ -83,7 +87,7 @@ export function BottomSheet({
       animationType="fade"
       statusBarTranslucent
       onRequestClose={close}>
-      <View className="flex-1 justify-end bg-black/60">
+      <View style={themeVars[mode]} className="flex-1 justify-end bg-black/60">
         <Pressable className="flex-1" onPress={close} />
         <Animated.View
           style={{

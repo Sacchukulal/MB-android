@@ -7,7 +7,9 @@ import {
   View,
 } from "react-native";
 
+import { themeVars } from "@/constants/theme";
 import { cn } from "@/lib/cn";
+import { useTheme } from "@/stores/theme";
 
 import { AppText } from "./text";
 
@@ -29,6 +31,7 @@ export function AppModal({
   actions,
   className,
 }: AppModalProps) {
+  const mode = useTheme((s) => s.mode);
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -52,6 +55,7 @@ export function AppModal({
       statusBarTranslucent
       onRequestClose={onClose}>
       <Pressable
+        style={themeVars[mode]}
         className="flex-1 items-center justify-center bg-black/60 px-6"
         onPress={onClose}>
         <Animated.View
