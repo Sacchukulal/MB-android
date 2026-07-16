@@ -17,7 +17,14 @@ export interface TrendPoint {
   total: number;
 }
 
-export function TrendBars({ points }: { points: TrendPoint[] }) {
+export function TrendBars({
+  points,
+  formatValue = formatShortINR,
+}: {
+  points: TrendPoint[];
+  /** Override for masked/relative data (e.g. v => `${v}% of best day`). */
+  formatValue?: (v: number) => string;
+}) {
   const colors = useThemeColors();
   const [selected, setSelected] = useState<number | null>(null);
 
@@ -40,11 +47,11 @@ export function TrendBars({ points }: { points: TrendPoint[] }) {
       <View className="mb-2 h-5 flex-row items-center justify-between">
         <AppText variant="caption">
           {selected != null
-            ? `${shortDate(points[selected].day)} — ${formatShortINR(points[selected].total)}`
+            ? `${shortDate(points[selected].day)} — ${formatValue(points[selected].total)}`
             : "Last 14 days"}
         </AppText>
         {selected == null ? (
-          <AppText variant="caption">peak {formatShortINR(max)}</AppText>
+          <AppText variant="caption">peak {formatValue(max)}</AppText>
         ) : null}
       </View>
 
@@ -70,7 +77,7 @@ export function TrendBars({ points }: { points: TrendPoint[] }) {
                   variant="caption"
                   className="mb-0.5 text-[9px]"
                   numberOfLines={1}>
-                  {formatShortINR(p.total)}
+                  {formatValue(p.total)}
                 </AppText>
               ) : null}
               <View

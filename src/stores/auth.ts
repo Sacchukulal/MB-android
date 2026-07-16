@@ -36,11 +36,15 @@ interface AuthState {
   restaurants: RestaurantInfo[];
   /** Present only for staff sessions. */
   staff: StaffInfo | null;
+  /** True when the session was killed server-side (vs voluntary logout). */
+  revoked: boolean;
 
   setOwnerSession: (restaurants: RestaurantInfo[], active?: RestaurantInfo) => void;
   setStaffSession: (staff: StaffInfo, restaurant: RestaurantInfo) => void;
   switchRestaurant: (restaurant: RestaurantInfo) => void;
   clearSession: () => void;
+  markRevoked: () => void;
+  ackRevoked: () => void;
 }
 
 export const useAuth = create<AuthState>((set) => ({
@@ -48,6 +52,7 @@ export const useAuth = create<AuthState>((set) => ({
   restaurant: null,
   restaurants: [],
   staff: null,
+  revoked: false,
 
   setOwnerSession: (restaurants, active) =>
     set({
@@ -63,7 +68,24 @@ export const useAuth = create<AuthState>((set) => ({
   switchRestaurant: (restaurant) => set({ restaurant }),
 
   clearSession: () =>
-    set({ kind: null, restaurant: null, restaurants: [], staff: null }),
+    set({
+      kind: null,
+      restaurant: null,
+      restaurants: [],
+      staff: null,
+      revoked: false,
+    }),
+
+  markRevoked: () =>
+    set({
+      kind: null,
+      restaurant: null,
+      restaurants: [],
+      staff: null,
+      revoked: true,
+    }),
+
+  ackRevoked: () => set({ revoked: false }),
 }));
 
 /**

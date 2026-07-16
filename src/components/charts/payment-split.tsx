@@ -12,18 +12,21 @@ import { useThemeColors } from "@/stores/theme";
 
 export function PaymentSplitBar({
   split,
-  hideAmounts = false,
+  pct,
 }: {
-  split: PaymentSplit;
-  /** For staff without view_revenue_totals: show % only. */
-  hideAmounts?: boolean;
+  /** Rupee amounts (owner / staff with revenue permission). */
+  split?: PaymentSplit;
+  /** Percentages only (staff without view_revenue_totals). */
+  pct?: PaymentSplit;
 }) {
   const colors = useThemeColors();
+  const source = split ?? pct ?? { cash: 0, card: 0, upi: 0, credit: 0 };
+  const hideAmounts = !split;
   const rows = [
-    { label: "Cash", value: split.cash, color: colors.chart.cash },
-    { label: "UPI", value: split.upi, color: colors.chart.upi },
-    { label: "Card", value: split.card, color: colors.chart.card },
-    { label: "Credit", value: split.credit, color: colors.chart.credit },
+    { label: "Cash", value: source.cash, color: colors.chart.cash },
+    { label: "UPI", value: source.upi, color: colors.chart.upi },
+    { label: "Card", value: source.card, color: colors.chart.card },
+    { label: "Credit", value: source.credit, color: colors.chart.credit },
   ];
   const total = rows.reduce((s, r) => s + r.value, 0);
   const active = rows.filter((r) => r.value > 0);
@@ -48,7 +51,11 @@ export function PaymentSplitBar({
 
       <View className="gap-2">
         {rows.map((r) => {
-          const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
+          const share = hideAmounts
+            ? Math.round(r.value)
+            : total > 0
+              ? Math.round((r.value / total) * 100)
+              : 0;
           return (
             <View key={r.label} className="flex-row items-center gap-2.5">
               <View
@@ -61,7 +68,7 @@ export function PaymentSplitBar({
               <AppText className="flex-1 font-sans-semibold text-sm text-ink">
                 {hideAmounts ? "••••" : formatINR(r.value)}
               </AppText>
-              <AppText variant="caption">{pct}%</AppText>
+              <AppText variant="caption">{share}%</AppText>
             </View>
           );
         })}
