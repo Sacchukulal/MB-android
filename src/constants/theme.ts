@@ -63,12 +63,14 @@ export const palettes: Record<ThemeMode, Palette> = {
     warning: "#fbbf24",
     danger: "#f87171",
     info: "#60a5fa",
+    // Chart palette validated (dataviz six-checks) against surface #111a2c.
+    // Same hues as light mode so payment-mode colors follow the entity.
     chart: {
-      cash: "#34d399",
-      card: "#60a5fa",
-      upi: "#2dd4bf",
-      credit: "#fbbf24",
-      series: ["#2dd4bf", "#60a5fa", "#a78bfa", "#fbbf24", "#f87171", "#34d399"],
+      cash: "#059669",
+      card: "#2563eb",
+      upi: "#0d9488",
+      credit: "#d97706",
+      series: ["#0d9488", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#059669"],
     },
   },
   // Light — cool white surfaces, same teal brand, darker tones for contrast.
@@ -91,6 +93,7 @@ export const palettes: Record<ThemeMode, Palette> = {
     warning: "#b45309",
     danger: "#dc2626",
     info: "#2563eb",
+    // Chart palette validated (dataviz six-checks) against surface #ffffff.
     chart: {
       cash: "#059669",
       card: "#2563eb",
