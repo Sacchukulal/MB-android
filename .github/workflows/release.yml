@@ -1,0 +1,91 @@
+# Magic Bill Android — release pipeline.
+# Push a tag like v1.2.3 and this builds a signed APK, generates
+# version.json, and publishes both as a GitHub Release. The app's in-app
+# updater reads releases/latest/download/version.json.
+#
+# Required repo secrets:
+#   ANDROID_KEYSTORE_BASE64  — base64 of magic-bill-release.keystore
+#   ANDROID_KEYSTORE_PASSWORD — the keystore/key password (alias: magicbill)
+#
+# NOTE: keep app.json's expo.version in sync with the tag (the APK's
+# versionName comes from app.json; version.json comes from the tag).
+
+name: Release APK
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install
+        env:
+          # Anon key is public by design (shipped in every client).
+          EXPO_PUBLIC_SUPABASE_URL: https://rlvygwituwywofwcwjsf.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://rlvygwituwywofwcwjsf.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+      - name: Sign APK with release keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            android/app/build/outputs/apk/release/app-release.apk aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks release.keystore \
+            --ks-key-alias magicbill \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
+            --out magic-bill.apk aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --print-certs magic-bill.apk
+          rm release.keystore
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+
+      - name: Generate version.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | head -c 1500)
+          [ -z "$NOTES" ] && NOTES="Magic Bill $VERSION"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg apk_url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/magic-bill.apk" \
+            --arg release_notes "$NOTES" \
+            '{version: $version, apk_url: $apk_url, release_notes: $release_notes}' \
+            > version.json
+          cat version.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            magic-bill.apk
+            version.json
+          generate_release_notes: true
