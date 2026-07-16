@@ -27,6 +27,21 @@ export interface PlanInfo {
   description: string | null;
 }
 
+export interface VisiblePlan extends PlanInfo {
+  features: string[] | null;
+  display_order: number;
+}
+
+/** All plans the website shows (public RLS: visible + active only). */
+export async function fetchVisiblePlans(): Promise<VisiblePlan[]> {
+  const { data, error } = await supabase
+    .from("plans")
+    .select("id, name, amount_paise, interval_unit, description, features, display_order")
+    .order("display_order", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as VisiblePlan[];
+}
+
 export interface AccountData {
   license: LicenseInfo;
   plan: PlanInfo | null;

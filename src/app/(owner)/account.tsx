@@ -1,5 +1,7 @@
 /** Account — restaurant info, subscription status, device lock, settings. */
 import {
+  ArrowLeftRight,
+  Check,
   ExternalLink,
   KeyRound,
   Mail,
@@ -10,9 +12,9 @@ import {
   Store,
   Sun,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Linking,
+  AppState,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -33,13 +35,22 @@ import {
   useToast,
 } from "@/components/ui";
 import { useCachedQuery } from "@/hooks/use-cached-query";
-import { daysUntil, fetchAccount, statusTone } from "@/lib/account";
+import {
+  daysUntil,
+  fetchAccount,
+  fetchVisiblePlans,
+  statusTone,
+  type VisiblePlan,
+} from "@/lib/account";
+import { openBillingPortal, type BillingDestination } from "@/lib/billing";
 import { formatINR, longDate, timeAgo } from "@/lib/format";
 import { installedVersion, useUpdate } from "@/lib/update";
 import { useAuth } from "@/stores/auth";
 import { useTheme, useThemeColors } from "@/stores/theme";
 
-const BILLING_URL = "https://magicbill.in/dashboard/billing";
+/** Statuses that mean "payments are lapsed — offer resubscribe + plans". */
+const LAPSED = ["cancelled", "expired", "halted", "completed", "revoked", "suspended"];
+const ACTIVE_LIKE = ["active", "trial", "grace"];
 
 function InfoRow({
   icon,
@@ -86,6 +97,32 @@ export default function AccountTab() {
     licenseKey ? `account.${licenseKey}` : null,
     () => fetchAccount(licenseKey!)
   );
+  const plansQ = useCachedQuery("plans.visible", fetchVisiblePlans);
+
+  const [showPlans, setShowPlans] = useState(false);
+  const [refreshingPlan, setRefreshingPlan] = useState(false);
+  const qRefresh = useRef(q.refresh);
+  qRefresh.current = q.refresh;
+
+  /** Open billing in a Chrome Custom Tab; on return, re-fetch the license. */
+  const goToBilling = async (destination: BillingDestination) => {
+    await openBillingPortal(destination);
+    setRefreshingPlan(true);
+    try {
+      await qRefresh.current();
+    } finally {
+      setRefreshingPlan(false);
+    }
+  };
+
+  // Safety net: some payment flows background the app (UPI apps) — refetch
+  // whenever we come back to the foreground so the new status shows fast.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") qRefresh.current();
+    });
+    return () => sub.remove();
+  }, []);
 
   const doCheckUpdate = async () => {
     setCheckingUpdate(true);
@@ -205,18 +242,126 @@ export default function AccountTab() {
                 <Badge label="Overdue" tone="danger" />
               ) : null}
             </View>
-            <Button
-              title="Manage subscription on magicbill.in"
-              variant="secondary"
-              size="sm"
-              className="mt-4"
-              icon={<ExternalLink size={14} color={colors.accentBright} />}
-              onPress={() => Linking.openURL(BILLING_URL)}
-            />
+            {refreshingPlan ? (
+              <View className="mt-4 flex-row items-center justify-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5">
+                <RefreshCw size={14} color={colors.accentBright} />
+                <AppText className="font-sans-medium text-xs text-accent-bright">
+                  Refreshing your plan status…
+                </AppText>
+              </View>
+            ) : null}
+
+            {/* Context-aware billing actions (Chrome Custom Tab + handoff) */}
+            {(() => {
+              const s = (lic.status || "").toLowerCase();
+              if (ACTIVE_LIKE.includes(s)) {
+                return (
+                  <View className="mt-4 gap-2.5">
+                    <Button
+                      title="Manage Subscription"
+                      variant="secondary"
+                      size="sm"
+                      icon={<ExternalLink size={14} color={colors.accentBright} />}
+                      onPress={() => goToBilling("/dashboard/billing")}
+                    />
+                    <Button
+                      title={showPlans ? "Hide other plans" : "Switch Plan"}
+                      variant="ghost"
+                      size="sm"
+                      icon={<ArrowLeftRight size={14} color={colors.accentBright} />}
+                      onPress={() => setShowPlans((v) => !v)}
+                    />
+                  </View>
+                );
+              }
+              if (LAPSED.includes(s)) {
+                return (
+                  <Button
+                    title="Resubscribe"
+                    size="sm"
+                    className="mt-4"
+                    onPress={() => goToBilling("/dashboard/billing")}
+                  />
+                );
+              }
+              return (
+                <Button
+                  title="Subscribe Now"
+                  size="sm"
+                  className="mt-4"
+                  onPress={() => goToBilling("/pricing")}
+                />
+              );
+            })()}
             <AppText variant="caption" className="mt-2 text-center">
-              Plans & payment are handled on the website.
+              Opens magicbill.in in a secure tab — you're signed in
+              automatically, and payment happens on the website.
             </AppText>
           </Card>
+
+          {/* Plan options: always for lapsed accounts, on demand when active */}
+          {(showPlans ||
+            LAPSED.includes((lic.status || "").toLowerCase())) &&
+          plansQ.data &&
+          plansQ.data.length > 0 ? (
+            <Card>
+              <AppText variant="heading" className="mb-1">
+                {LAPSED.includes((lic.status || "").toLowerCase())
+                  ? "Pick a plan to get going again"
+                  : "Available plans"}
+              </AppText>
+              <AppText variant="caption" className="mb-4">
+                Choosing a plan opens secure checkout on magicbill.in.
+              </AppText>
+              <View className="gap-3">
+                {plansQ.data.map((p: VisiblePlan) => {
+                  const current = p.id === lic.plan_id;
+                  const features = Array.isArray(p.features) ? p.features : [];
+                  return (
+                    <Pressable
+                      key={p.id}
+                      disabled={current}
+                      onPress={() => goToBilling("/dashboard/billing")}
+                      className={
+                        current
+                          ? "rounded-xl border border-accent bg-accent-soft p-4"
+                          : "rounded-xl border border-line-strong bg-surface-2 p-4 active:border-accent"
+                      }>
+                      <View className="flex-row items-center justify-between">
+                        <AppText className="font-sans-bold text-base text-ink">
+                          {p.name}
+                        </AppText>
+                        {current ? (
+                          <Badge label="Current" tone="accent" />
+                        ) : (
+                          <AppText className="font-sans-semibold text-sm text-accent-bright">
+                            {formatINR(p.amount_paise / 100)}/{p.interval_unit}
+                          </AppText>
+                        )}
+                      </View>
+                      {p.description ? (
+                        <AppText variant="caption" className="mt-1">
+                          {p.description}
+                        </AppText>
+                      ) : null}
+                      {features.length > 0 ? (
+                        <View className="mt-2.5 gap-1.5">
+                          {features.slice(0, 4).map((f) => (
+                            <View key={f} className="flex-row items-center gap-2">
+                              <Check size={13} color={colors.success} />
+                              <AppText className="flex-1 text-xs text-ink-muted">
+                                {f}
+                              </AppText>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Card>
+          ) : null}
 
           {/* Bound device */}
           <Card>

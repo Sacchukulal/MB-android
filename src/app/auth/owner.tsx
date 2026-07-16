@@ -54,10 +54,8 @@ export default function OwnerLogin() {
 
       const restaurants = await loadOwnerRestaurants();
       if (restaurants.length === 0) {
-        setError(
-          "No restaurant is linked to this account yet. Finish setup on magicbill.in first."
-        );
-        await supabase.auth.signOut();
+        // Signed in but nothing linked: onboarding screen, not an error.
+        router.replace("/subscribe");
         return;
       }
 

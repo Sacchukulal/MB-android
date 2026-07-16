@@ -96,8 +96,13 @@ export default function Bootstrap() {
           }
           return;
         }
-        // Signed in but nothing linked (or first load failed with no cache):
-        // fall through to welcome so the user isn't stuck on a spinner.
+        if (restaurants && restaurants.length === 0) {
+          // Signed in but no subscription/restaurant yet — onboarding.
+          router.replace("/subscribe");
+          return;
+        }
+        // First load failed with no cache: fall through to welcome so the
+        // user isn't stuck on a spinner.
       }
 
       router.replace("/welcome");
