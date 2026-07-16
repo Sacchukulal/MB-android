@@ -14,6 +14,7 @@ import { View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ToastProvider } from "@/components/ui";
+import { UpdatePrompt } from "@/components/update-prompt";
 import { palettes, themeVars, type ThemeMode } from "@/constants/theme";
 import { useTheme } from "@/stores/theme";
 
@@ -73,6 +74,7 @@ export default function RootLayout() {
                 animation: "fade_from_bottom",
               }}
             />
+            <UpdatePrompt />
           </ToastProvider>
         </View>
       </ThemeProvider>
