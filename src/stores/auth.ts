@@ -14,8 +14,11 @@ import { hasPermission } from "@/lib/permissions";
  */
 
 export interface RestaurantInfo {
+  /** Empty string for staff sessions — staff never see the license key. */
   licenseKey: string;
   name: string;
+  /** Human-readable restaurant code (staff login code), when known. */
+  code?: string;
 }
 
 export interface StaffInfo {
