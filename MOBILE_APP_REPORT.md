@@ -1,4 +1,4 @@
-# Magic Bill Mobile App — Build Report (Phase 5)
+﻿# Magic Bill Mobile App â€” Build Report (Phase 5)
 
 Built 2026-07-16. Android-only React Native app in `MB-android/`, published
 at https://github.com/Sacchukulal/MB-android with a signed-APK release
@@ -9,10 +9,10 @@ pipeline and in-app auto-update.
 ### Two-door login
 - **Owner door**: Supabase Auth email+password (same identity as
   magicbill.in). Multi-outlet owners get a restaurant picker; the selection
-  persists. No in-app signup — the app links to the website, where payment
+  persists. No in-app signup â€” the app links to the website, where payment
   lives.
 - **Staff door**: Restaurant Code + 4-digit PIN via the `staff-login` Edge
-  Function. Staff receive an opaque session token — never the license key,
+  Function. Staff receive an opaque session token â€” never the license key,
   never direct database access.
 - **Sessions persist forever.** On launch: stored owner sessions silently
   refresh; staff tokens re-verify server-side (owner revocations apply
@@ -21,8 +21,8 @@ pipeline and in-app auto-update.
   Tokens live in Android Keystore (expo-secure-store).
 
 ### Owner experience
-- **Dashboard**: today's revenue (computed live from `bills` — never waits
-  for the nightly summary job), Δ vs yesterday, bill count, avg bill,
+- **Dashboard**: today's revenue (computed live from `bills` â€” never waits
+  for the nightly summary job), Î” vs yesterday, bill count, avg bill,
   payment split, 14-day trend (tap a bar for its value), top 5 items,
   pull-to-refresh.
 - **Reports**: Today / Yesterday / This week / This month / Custom range
@@ -30,7 +30,7 @@ pipeline and in-app auto-update.
   item-wise sales, expenses + net, tappable bill list.
 - **Bill receipts**: any bill renders as a thermal receipt; Share generates
   a PDF on-device into the Android share sheet. Reports also export as PDF
-  or CSV — all on-device, zero server storage.
+  or CSV â€” all on-device, zero server storage.
 - **Staff management**: restaurant code card (copy button, auto-generates
   if missing), add/edit staff with free-text role labels, per-person
   permission checklist (9 keys + presets: Full access / Reports only /
@@ -43,9 +43,9 @@ pipeline and in-app auto-update.
 
 ### Staff experience
 - Tabs appear only for enabled permissions: Home (always), Reports
-  (`view_reports`), Orders (`take_orders` — polished "coming soon" screen),
+  (`view_reports`), Orders (`take_orders` â€” polished "coming soon" screen),
   Profile (always).
-- `view_revenue_totals` off ⇒ amounts show `••••`, payment split becomes
+- `view_revenue_totals` off â‡’ amounts show `â€¢â€¢â€¢â€¢`, payment split becomes
   percentages, the trend becomes a relative "busy days" shape (the server
   never sends rupee values), item revenue hidden. Individual bill amounts
   ride with `view_bills` (staff handle paper receipts anyway).
@@ -61,7 +61,7 @@ pipeline and in-app auto-update.
 
 ### Offline
 - Every fetch caches into expo-sqlite; when the network fails, screens show
-  cached data with an "Offline — last updated X ago" chip. Airplane-mode
+  cached data with an "Offline â€” last updated X ago" chip. Airplane-mode
   app opens work for both doors.
 
 ### Theming
@@ -89,17 +89,17 @@ pipeline and in-app auto-update.
   JWT.
 
 ## Release pipeline
-- `.github/workflows/release.yml`: on `v*` tags → `expo prebuild` →
-  `gradlew assembleRelease` → zipalign + apksigner with the release
-  keystore (repo secrets) → GitHub Release with `magic-bill.apk` +
+- `.github/workflows/release.yml`: on `v*` tags â†’ `expo prebuild` â†’
+  `gradlew assembleRelease` â†’ zipalign + apksigner with the release
+  keystore (repo secrets) â†’ GitHub Release with `magic-bill.apk` +
   generated `version.json`.
-- **Keystore**: `C:\Data_Drive\MagicBill\keys\magic-bill-release.keystore`
-  (password in `keystore-password.txt` next to it). BACK THESE UP — losing
+- **Keystore**: `C:\Data_Drive\MagicBill\MB-android\keys\magic-bill-release.keystore`
+  (password in `keystore-password.txt` next to it). BACK THESE UP â€” losing
   them means existing installs can't update in place. Never commit them.
 - Repo secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`;
   repo variable `SUPABASE_ANON_KEY` (public anon key).
-- To release: bump `expo.version` in app.json → commit →
-  `git tag -a v1.x.y -m "notes"` → `git push origin v1.x.y`.
+- To release: bump `expo.version` in app.json â†’ commit â†’
+  `git tag -a v1.x.y -m "notes"` â†’ `git push origin v1.x.y`.
 
 ## How to run locally
 ```bash
@@ -110,14 +110,14 @@ npx expo start               # press "a" for Android
 Useful checks: `npx tsc --noEmit`, `npx expo export --platform android`.
 
 ## Test checklist (manual, on device)
-- Owner login → dashboard → reports → bill → share receipt PDF.
+- Owner login â†’ dashboard â†’ reports â†’ bill â†’ share receipt PDF.
 - Staff login (get code+PIN from the owner's Staff tab).
-- Owner: add staff with "Reports only" → staff sees only those tabs.
-- Owner: toggle off "See revenue amounts" → staff sees ••••/percentages.
-- Owner: deactivate staff → staff app boots to "Access revoked".
+- Owner: add staff with "Reports only" â†’ staff sees only those tabs.
+- Owner: toggle off "See revenue amounts" â†’ staff sees â€¢â€¢â€¢â€¢/percentages.
+- Owner: deactivate staff â†’ staff app boots to "Access revoked".
 - Restaurant switcher (owners with 2+ licenses).
-- Airplane mode → app opens with cached data + offline chip.
-- Logout → welcome screen; sessions really cleared.
+- Airplane mode â†’ app opens with cached data + offline chip.
+- Logout â†’ welcome screen; sessions really cleared.
 
 ## Deferred (by design)
 - **Ordering (Phase 6)**: navigation slot + `take_orders` permission +
@@ -126,3 +126,4 @@ Useful checks: `npx tsc --noEmit`, `npx expo export --platform android`.
   points: the startup flow in `src/app/_layout.tsx` (register after
   `ready`), and a future notification-preferences row in Account/Profile.
 - Play Store distribution (direct APK by decision).
+
