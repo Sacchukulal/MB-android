@@ -88,8 +88,12 @@ private fun StaffTabs(
     onOpenBill: (String) -> Unit,
 ) {
     val perms = staffSession.staff.permissions
+    val hasAnyView = perms.has(PermissionKey.ViewDashboard) ||
+        perms.has(PermissionKey.ViewReports) || perms.has(PermissionKey.TakeOrders)
     val tabs = buildList {
-        if (perms.has(PermissionKey.ViewDashboard)) {
+        // No view permissions at all → Home still exists and shows the
+        // friendly "your manager will enable features" screen.
+        if (perms.has(PermissionKey.ViewDashboard) || !hasAnyView) {
             add(StaffTab(PillNavItem("Home", Icons.Outlined.Home, Icons.Filled.Home), "home"))
         }
         if (perms.has(PermissionKey.ViewReports)) {
