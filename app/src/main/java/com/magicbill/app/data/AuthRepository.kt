@@ -150,6 +150,10 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    /** True once the owner has explicitly picked an outlet (multi-outlet). */
+    fun hasStoredSelection(): Boolean =
+        prefs.getString(SecurePrefs.SELECTED_LICENSE) != null
+
     fun switchRestaurant(restaurant: RestaurantInfo) {
         prefs.putString(SecurePrefs.SELECTED_LICENSE, restaurant.licenseKey)
         val current = _session.value

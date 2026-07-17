@@ -72,6 +72,7 @@ fun StaffShell(rootViewModel: RootViewModel) {
                     billId = route.billId,
                     isStaff = true,
                     onBack = { navController.popBackStack() },
+                    restaurantName = staff.restaurant.name,
                 )
             }
         }

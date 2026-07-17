@@ -69,6 +69,7 @@ fun OwnerShell(rootViewModel: RootViewModel) {
                     billId = route.billId,
                     isStaff = false,
                     onBack = { navController.popBackStack() },
+                    restaurantName = owner.active?.name ?: "Magic Bill",
                 )
             }
         }
