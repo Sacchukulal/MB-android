@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Native splash (AndroidX SplashScreen API). Covers the cold-start session
+         check so the user never sees a login flash. -->
+    <style name="Theme.MagicBill.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/mb_navy</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splashscreen_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.MagicBill</item>
+    </style>
+
+    <style name="Theme.MagicBill" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/mb_navy</item>
+    </style>
+</resources>

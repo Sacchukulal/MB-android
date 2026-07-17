@@ -1,0 +1,67 @@
+package com.magicbill.app.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// Brand
+val Emerald = Color(0xFF10B981)
+val EmeraldDeep = Color(0xFF047857)
+val Teal = Color(0xFF2DD4BF)
+val Navy = Color(0xFF0B1120)
+val NavySurface = Color(0xFF131B2E)
+
+// Dark palette
+val DarkOnPrimary = Color(0xFF04281B)
+val DarkPrimaryContainer = Color(0xFF065F46)
+val DarkOnPrimaryContainer = Color(0xFFA7F3D0)
+val DarkOnSecondary = Color(0xFF042F2A)
+val DarkSecondaryContainer = Color(0xFF115E59)
+val DarkOnSecondaryContainer = Color(0xFF99F6E4)
+val DarkTertiary = Color(0xFFFBBF24)
+val DarkOnTertiary = Color(0xFF2B1700)
+val DarkTertiaryContainer = Color(0xFF78350F)
+val DarkOnTertiaryContainer = Color(0xFFFDE68A)
+val DarkInk = Color(0xFFE2E8F0)
+val DarkInkMuted = Color(0xFF94A3B8)
+val DarkSurfaceLow = Color(0xFF101828)
+val DarkSurfaceHigh = Color(0xFF182238)
+val DarkSurfaceHighest = Color(0xFF1E2A45)
+val DarkSurfaceVariant = Color(0xFF1B2540)
+val DarkOutline = Color(0xFF334155)
+val DarkOutlineVariant = Color(0xFF1E293B)
+val DarkError = Color(0xFFF87171)
+val DarkOnError = Color(0xFF2D0606)
+val DarkErrorContainer = Color(0xFF7F1D1D)
+val DarkOnErrorContainer = Color(0xFFFECACA)
+
+// Light palette
+val LightBackground = Color(0xFFF8FAFC)
+val LightSurface = Color(0xFFFFFFFF)
+val LightSurfaceLow = Color(0xFFF1F5F9)
+val LightSurfaceHigh = Color(0xFFE8EEF5)
+val LightInk = Color(0xFF0F172A)
+val LightInkMuted = Color(0xFF475569)
+val LightPrimaryContainer = Color(0xFFD1FAE5)
+val LightOnPrimaryContainer = Color(0xFF064E3B)
+val LightSecondary = Color(0xFF0D9488)
+val LightSecondaryContainer = Color(0xFFCCFBF1)
+val LightOnSecondaryContainer = Color(0xFF134E4A)
+val LightTertiary = Color(0xFFB45309)
+val LightTertiaryContainer = Color(0xFFFEF3C7)
+val LightOnTertiaryContainer = Color(0xFF78350F)
+val LightOutline = Color(0xFFCBD5E1)
+val LightOutlineVariant = Color(0xFFE2E8F0)
+val LightError = Color(0xFFDC2626)
+val LightErrorContainer = Color(0xFFFEE2E2)
+val LightOnErrorContainer = Color(0xFF7F1D1D)
+
+// Payment-mode accents (charts & split cards; validated for both themes)
+object PaymentColors {
+    val cashDark = Color(0xFF059669)
+    val cardDark = Color(0xFF2563EB)
+    val upiDark = Color(0xFF0D9488)
+    val creditDark = Color(0xFFD97706)
+    val cashLight = Color(0xFF059669)
+    val cardLight = Color(0xFF2563EB)
+    val upiLight = Color(0xFF0D9488)
+    val creditLight = Color(0xFFB45309)
+}
