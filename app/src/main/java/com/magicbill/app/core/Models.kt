@@ -246,6 +246,22 @@ data class StaffReport(
 @Serializable
 data class StaffBillDetail(val bill: BillRow)
 
+/**
+ * Read-only plan/subscription view for staff who have `view_plan_status`.
+ * Served by the staff-data `account` view (gated server-side); staff never
+ * receive the license key or any billing controls. Forward-compatible: the
+ * profile screen simply hides this section until the backend returns it.
+ */
+@Serializable
+data class StaffPlanInfo(
+    val planName: String? = null,
+    val status: String? = null,
+    val nextBillingDate: String? = null,
+    val amountPaise: Long? = null,
+    val intervalUnit: String? = null,
+    val daysRemaining: Int? = null,
+)
+
 // ---------------- updates ----------------
 
 @Serializable

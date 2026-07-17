@@ -112,3 +112,77 @@ class StaffViewModel @Inject constructor(
         }
     }
 }
+
+/**
+ * Staff-side staff management for a trusted manager (manage_staff permission).
+ * Mirrors [StaffViewModel] but authenticates with the staff session token —
+ * the Edge Function derives the license and enforces the manager guardrails,
+ * so no licenseKey is needed here.
+ */
+@HiltViewModel
+class StaffManagerViewModel @Inject constructor(
+    private val query: CachedQuery,
+    private val repo: StaffManageRepository,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(CachedUi<StaffListData>())
+    val state: StateFlow<CachedUi<StaffListData>> = _state.asStateFlow()
+
+    private val _events = MutableSharedFlow<StaffEvent>()
+    val events: SharedFlow<StaffEvent> = _events.asSharedFlow()
+
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private var loaded = false
+
+    fun load(force: Boolean = false) {
+        if (!force && loaded && _state.value.data != null) return
+        loaded = true
+        query.run(viewModelScope, "staff.manage", StaffListData.serializer(), _state) {
+            repo.listAsStaff()
+        }
+    }
+
+    fun generatePin(): String = repo.generatePin()
+
+    fun create(name: String, roleLabel: String, pin: String, permissions: PermissionMap) = mutate {
+        val staff = repo.createAsStaff(name.trim(), roleLabel.trim(), pin, permissions)
+        _events.emit(StaffEvent.PinCreated(staff.name, pin))
+    }
+
+    fun update(staff: StaffRow, name: String, roleLabel: String, permissions: PermissionMap) = mutate {
+        repo.updateAsStaff(staff.id, name.trim(), roleLabel.trim(), permissions)
+        _events.emit(StaffEvent.Saved("${name.trim()} updated"))
+    }
+
+    fun setActive(staff: StaffRow, active: Boolean) = mutate {
+        repo.updateAsStaff(staff.id, isActive = active)
+        _events.emit(StaffEvent.Saved(if (active) "${staff.name} activated" else "${staff.name} deactivated"))
+    }
+
+    fun resetPin(staff: StaffRow, pin: String) = mutate {
+        repo.resetPinAsStaff(staff.id, pin)
+        _events.emit(StaffEvent.PinReset(staff.name, pin))
+    }
+
+    fun remove(staff: StaffRow) = mutate {
+        repo.removeAsStaff(staff.id)
+        _events.emit(StaffEvent.Saved("${staff.name} removed"))
+    }
+
+    private fun mutate(block: suspend () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            try {
+                block()
+                load(force = true)
+            } catch (e: Exception) {
+                _events.emit(StaffEvent.Error(e.message ?: "Something went wrong — try again."))
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+}

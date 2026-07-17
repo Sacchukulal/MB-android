@@ -43,6 +43,30 @@ import com.magicbill.app.ui.components.PinInput
 import com.magicbill.app.ui.components.ScreenHeader
 
 /**
+ * Enforces the restaurant-code shape `XX-NNNN` (2 uppercase letters, hyphen,
+ * 4 digits) as the user types or pastes. Strips everything that doesn't belong,
+ * auto-inserts the hyphen after two letters, and caps at 7 characters.
+ * `previous` lets a backspace on "HN-" fall back to "HN" instead of the
+ * hyphen re-appearing forever.
+ */
+private fun formatRestaurantCode(raw: String, previous: String): String {
+    val cleaned = raw.uppercase().filter { it.isLetterOrDigit() }
+    val letters = cleaned.takeWhile { it.isLetter() }.take(2)
+    val digits = cleaned.drop(letters.length).filter { it.isDigit() }.take(4)
+    return when {
+        letters.length < 2 -> letters
+        digits.isEmpty() -> {
+            // Two letters, no digits yet. Auto-insert the hyphen while typing
+            // forward, but honour a deletion that removed it (raw got shorter
+            // and no longer ends in "-").
+            if (raw.length < previous.length && !raw.endsWith("-")) letters
+            else "$letters-"
+        }
+        else -> "$letters-$digits"
+    }
+}
+
+/**
  * Staff door: restaurant code (remembered after first login) + 4-digit PIN.
  * When 4 digits land, sign-in fires automatically.
  */
@@ -89,7 +113,10 @@ fun StaffLoginScreen(
             if (editingCode) {
                 MBTextField(
                     value = code,
-                    onValueChange = { code = it.uppercase(); viewModel.clearStaffError() },
+                    onValueChange = { raw ->
+                        code = formatRestaurantCode(raw, previous = code)
+                        viewModel.clearStaffError()
+                    },
                     label = "Restaurant Code",
                     placeholder = "e.g. HH-4829",
                     leadingIcon = Icons.Outlined.Storefront,

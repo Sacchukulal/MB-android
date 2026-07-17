@@ -8,10 +8,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.RestaurantMenu
 import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,6 +36,7 @@ import com.magicbill.app.ui.RootViewModel
 import com.magicbill.app.ui.components.PillNavBar
 import com.magicbill.app.ui.components.PillNavItem
 import com.magicbill.app.ui.screens.bills.BillDetailScreen
+import com.magicbill.app.ui.screens.staff.StaffOrdersScreen
 import com.magicbill.app.ui.theme.MBMotion
 import androidx.compose.runtime.CompositionLocalProvider
 
@@ -88,6 +91,7 @@ private fun OwnerTabs(
         PillNavItem("Dashboard", Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),
         PillNavItem("Reports", Icons.Outlined.BarChart, Icons.Filled.BarChart),
         PillNavItem("Staff", Icons.Outlined.Group, Icons.Filled.Group),
+        PillNavItem("Orders", Icons.Outlined.RestaurantMenu, Icons.Filled.RestaurantMenu),
         PillNavItem(
             "Account", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle,
             showDot = rootViewModel.updateDotVisible.collectAsStateWithLifecycle().value,
@@ -104,6 +108,7 @@ private fun OwnerTabs(
                 0 -> DashboardScreen(rootViewModel, owner, onOpenBill)
                 1 -> ReportsScreen(rootViewModel, owner, onOpenBill)
                 2 -> StaffScreen(owner)
+                3 -> StaffOrdersScreen()
                 else -> AccountScreen(rootViewModel, owner)
             }
         }

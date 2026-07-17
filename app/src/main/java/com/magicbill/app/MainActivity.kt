@@ -5,8 +5,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magicbill.app.data.MBSession
 import com.magicbill.app.navigation.MagicBillRoot
@@ -28,6 +31,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val dark by viewModel.darkTheme.collectAsStateWithLifecycle()
+            val view = LocalView.current
+            // Edge-to-edge draws behind the system bars, so we own the icon
+            // appearance: dark icons on a light theme, light icons on dark.
+            // Keyed on `dark` so the in-app toggle flips the bars immediately.
+            LaunchedEffect(dark) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
             MagicBillTheme(darkTheme = dark) {
                 MagicBillRoot(viewModel)
             }

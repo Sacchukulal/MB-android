@@ -12,16 +12,22 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.TableView
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -33,6 +39,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magicbill.app.core.Exporter
 import com.magicbill.app.core.PermissionKey
+import com.magicbill.app.core.StaffReport
 import com.magicbill.app.core.billTime
 import com.magicbill.app.core.formatINR
 import com.magicbill.app.core.has
@@ -40,6 +47,8 @@ import com.magicbill.app.core.istDayString
 import com.magicbill.app.core.longDate
 import com.magicbill.app.core.shiftDay
 import com.magicbill.app.data.MBSession
+import java.time.Instant
+import java.time.ZoneOffset
 import com.magicbill.app.ui.components.AnimatedCount
 import com.magicbill.app.ui.components.AnimatedRupees
 import com.magicbill.app.ui.components.CacheChip
@@ -51,15 +60,16 @@ import com.magicbill.app.ui.components.SkeletonScreen
 import com.magicbill.app.ui.components.StackedSplitBar
 import com.magicbill.app.ui.theme.PaymentColors
 
-private val RANGES = listOf("Today", "Yesterday", "7 days", "This month")
+private val RANGES = listOf("Today", "Yesterday", "7 days", "This month", "Custom")
 
-private fun rangeFor(index: Int): Pair<String, String> {
+private fun rangeFor(index: Int, customFrom: String?, customTo: String?): Pair<String, String> {
     val today = istDayString()
     return when (index) {
         0 -> today to today
         1 -> shiftDay(today, -1) to shiftDay(today, -1)
         2 -> shiftDay(today, -6) to today
-        else -> today.take(8) + "01" to today
+        3 -> today.take(8) + "01" to today
+        else -> (customFrom ?: today) to (customTo ?: today)
     }
 }
 
@@ -76,7 +86,10 @@ fun StaffReportsScreen(
     val context = LocalContext.current
 
     var rangeIndex by rememberSaveable { mutableIntStateOf(0) }
-    val (fromDay, toDay) = rangeFor(rangeIndex)
+    var customFrom by rememberSaveable { mutableStateOf<String?>(null) }
+    var customTo by rememberSaveable { mutableStateOf<String?>(null) }
+    var customPickerOpen by rememberSaveable { mutableStateOf(false) }
+    val (fromDay, toDay) = rangeFor(rangeIndex, customFrom, customTo)
 
     LaunchedEffect(fromDay, toDay) { viewModel.load(fromDay, toDay) }
 
@@ -96,34 +109,31 @@ fun StaffReportsScreen(
                     if (data != null && data.total != null &&
                         perms.has(PermissionKey.ExportReports)
                     ) {
-                        IconButton(onClick = {
-                            Exporter.shareReportPdf(
-                                context = context,
-                                restaurantName = session.restaurant.name,
-                                fromDay = data.from, toDay = data.to,
-                                total = data.total ?: 0.0,
-                                subtotal = data.subtotal ?: 0.0,
-                                gst = data.gst ?: 0.0,
-                                billCount = data.billCount,
-                                avg = data.avg ?: 0.0,
-                                cash = data.split.cash, card = data.split.card,
-                                upi = data.split.upi, credit = data.split.credit,
-                                items = data.items.map {
-                                    Triple(it.name, it.quantity, it.amount ?: 0.0)
-                                },
-                                expenseTotal = data.expenseTotal ?: 0.0,
-                            )
-                        }) {
+                        IconButton(onClick = { staffSharePdf(context, session.restaurant.name, data) }) {
                             Icon(
                                 Icons.Outlined.IosShare,
                                 contentDescription = "Share PDF",
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        IconButton(onClick = { staffShareCsv(context, session.restaurant.name, data) }) {
+                            Icon(
+                                Icons.Outlined.TableView,
+                                contentDescription = "Export CSV",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                SegmentedChips(RANGES, rangeIndex, onSelect = { rangeIndex = it })
+                SegmentedChips(
+                    options = RANGES,
+                    selectedIndex = rangeIndex,
+                    onSelect = { index ->
+                        if (index == RANGES.lastIndex) customPickerOpen = true
+                        else rangeIndex = index
+                    },
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (fromDay == toDay) longDate(fromDay) else "${longDate(fromDay)} — ${longDate(toDay)}",
@@ -186,6 +196,11 @@ fun StaffReportsScreen(
                                     data.split.upi.toFloat(), data.split.credit.toFloat(),
                                 ),
                             )
+                        }
+
+                        if (perms.has(PermissionKey.ViewExpenses) && data.expenseTotal != null) {
+                            SectionHeader("Expenses")
+                            StatLine("Total expenses", formatINR(data.expenseTotal))
                         }
                     }
 
@@ -253,4 +268,93 @@ fun StaffReportsScreen(
             item { Spacer(Modifier.height(130.dp)) }
         }
     }
+
+    if (customPickerOpen) {
+        val pickerState = rememberDateRangePickerState()
+        DatePickerDialog(
+            onDismissRequest = { customPickerOpen = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val start = pickerState.selectedStartDateMillis
+                        val end = pickerState.selectedEndDateMillis ?: start
+                        if (start != null) {
+                            customFrom = Instant.ofEpochMilli(start).atZone(ZoneOffset.UTC)
+                                .toLocalDate().toString()
+                            customTo = Instant.ofEpochMilli(end!!).atZone(ZoneOffset.UTC)
+                                .toLocalDate().toString()
+                            rangeIndex = RANGES.lastIndex
+                        }
+                        customPickerOpen = false
+                    },
+                ) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { customPickerOpen = false }) { Text("Cancel") }
+            },
+        ) {
+            DateRangePicker(state = pickerState, showModeToggle = false)
+        }
+    }
+}
+
+@Composable
+private fun StatLine(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(value, style = MaterialTheme.typography.titleSmall)
+    }
+}
+
+private fun staffSharePdf(context: android.content.Context, restaurantName: String, data: StaffReport) {
+    Exporter.shareReportPdf(
+        context = context,
+        restaurantName = restaurantName,
+        fromDay = data.from, toDay = data.to,
+        total = data.total ?: 0.0,
+        subtotal = data.subtotal ?: 0.0,
+        gst = data.gst ?: 0.0,
+        billCount = data.billCount,
+        avg = data.avg ?: 0.0,
+        cash = data.split.cash, card = data.split.card,
+        upi = data.split.upi, credit = data.split.credit,
+        items = data.items.map { Triple(it.name, it.quantity, it.amount ?: 0.0) },
+        expenseTotal = data.expenseTotal ?: 0.0,
+    )
+}
+
+private fun staffShareCsv(context: android.content.Context, restaurantName: String, data: StaffReport) {
+    fun q(s: String) = "\"${s.replace("\"", "\"\"")}\""
+    // Staff bill rows carry fewer columns than the owner's; the Type/Subtotal/GST
+    // cells stay blank so the CSV keeps the same shape as owner exports.
+    val bills = data.bills.orEmpty().map { b ->
+        arrayOf(
+            q(b.bill_number ?: ""), q(billTime(b.billed_at)), "",
+            q(b.table_number ?: ""), q(b.payment_mode ?: ""),
+            "", "", "%.2f".format(b.total ?: 0.0),
+        )
+    }
+    Exporter.shareReportCsv(
+        context = context,
+        restaurantName = restaurantName,
+        fromDay = data.from, toDay = data.to,
+        total = data.total ?: 0.0,
+        subtotal = data.subtotal ?: 0.0,
+        gst = data.gst ?: 0.0,
+        billCount = data.billCount,
+        avg = data.avg ?: 0.0,
+        cash = data.split.cash, card = data.split.card,
+        upi = data.split.upi, credit = data.split.credit,
+        expenseTotal = data.expenseTotal ?: 0.0,
+        items = data.items.map { Triple(it.name, it.quantity, it.amount ?: 0.0) },
+        bills = bills,
+    )
 }

@@ -35,7 +35,11 @@ fun PermissionEditor(
     permissions: PermissionMap,
     onChange: (PermissionMap) -> Unit,
     modifier: Modifier = Modifier,
+    excludeKeys: Set<String> = emptySet(),
 ) {
+    // A trusted staff-manager can't grant certain permissions (e.g. manage_staff
+    // — only owners mint managers), so those rows are hidden entirely.
+    val metas = PERMISSION_METAS.filter { it.key.key !in excludeKeys }
     Column(modifier) {
         Text(
             "PERMISSIONS",
@@ -48,8 +52,10 @@ fun PermissionEditor(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            PERMISSION_PRESETS.forEach { (label, preset) ->
-                val active = PERMISSION_METAS.all { meta ->
+            PERMISSION_PRESETS.forEach { (label, rawPreset) ->
+                // Presets can't turn on an excluded key either.
+                val preset = rawPreset.filterKeys { it !in excludeKeys }
+                val active = metas.all { meta ->
                     (permissions[meta.key.key] == true) == (preset[meta.key.key] == true)
                 }
                 Text(
@@ -71,7 +77,7 @@ fun PermissionEditor(
 
         Spacer(Modifier.height(6.dp))
 
-        PERMISSION_METAS.forEach { meta ->
+        metas.forEach { meta ->
             val checked = permissions[meta.key.key] == true
             Row(
                 Modifier

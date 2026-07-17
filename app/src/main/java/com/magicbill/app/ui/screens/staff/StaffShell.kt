@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.RestaurantMenu
@@ -36,6 +38,7 @@ import com.magicbill.app.ui.RootViewModel
 import com.magicbill.app.ui.components.PillNavBar
 import com.magicbill.app.ui.components.PillNavItem
 import com.magicbill.app.ui.screens.bills.BillDetailScreen
+import com.magicbill.app.ui.screens.owner.StaffManagerScreen
 import com.magicbill.app.ui.theme.MBMotion
 
 /**
@@ -99,6 +102,9 @@ private fun StaffTabs(
         if (perms.has(PermissionKey.ViewReports)) {
             add(StaffTab(PillNavItem("Reports", Icons.Outlined.BarChart, Icons.Filled.BarChart), "reports"))
         }
+        if (perms.has(PermissionKey.ManageStaff)) {
+            add(StaffTab(PillNavItem("Staff", Icons.Outlined.Group, Icons.Filled.Group), "staff"))
+        }
         if (perms.has(PermissionKey.TakeOrders)) {
             add(StaffTab(PillNavItem("Orders", Icons.Outlined.RestaurantMenu, Icons.Filled.RestaurantMenu), "orders"))
         }
@@ -117,6 +123,7 @@ private fun StaffTabs(
             when (key) {
                 "home" -> StaffHomeScreen(staffSession, onOpenBill)
                 "reports" -> StaffReportsScreen(staffSession, onOpenBill)
+                "staff" -> StaffManagerScreen()
                 "orders" -> StaffOrdersScreen()
                 else -> StaffProfileScreen(rootViewModel, staffSession)
             }

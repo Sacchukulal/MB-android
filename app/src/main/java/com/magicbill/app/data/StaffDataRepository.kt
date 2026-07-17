@@ -3,6 +3,7 @@ package com.magicbill.app.data
 import com.magicbill.app.core.BillRow
 import com.magicbill.app.core.StaffBillDetail
 import com.magicbill.app.core.StaffDashboard
+import com.magicbill.app.core.StaffPlanInfo
 import com.magicbill.app.core.StaffReport
 import com.magicbill.app.data.remote.EdgeFunctions
 import com.magicbill.app.data.remote.StaffDataEnvelope
@@ -66,4 +67,8 @@ class StaffDataRepository @Inject constructor(
 
     suspend fun bill(billId: String): BillRow =
         call("bill", StaffBillDetail.serializer(), mapOf("billId" to billId)).bill
+
+    /** Read-only plan/subscription info — gated server-side by view_plan_status. */
+    suspend fun account(): StaffPlanInfo =
+        call("account", StaffPlanInfo.serializer())
 }

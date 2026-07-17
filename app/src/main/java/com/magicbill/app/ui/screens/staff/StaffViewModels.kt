@@ -3,6 +3,7 @@ package com.magicbill.app.ui.screens.staff
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.magicbill.app.core.StaffDashboard
+import com.magicbill.app.core.StaffPlanInfo
 import com.magicbill.app.core.StaffReport
 import com.magicbill.app.data.CachedQuery
 import com.magicbill.app.data.StaffDataRepository
@@ -51,6 +52,31 @@ class StaffReportsViewModel @Inject constructor(
         loadedRange = key
         query.run(viewModelScope, key, StaffReport.serializer(), _state) {
             repo.report(fromDay, toDay)
+        }
+    }
+}
+
+/**
+ * Read-only plan/subscription for staff with `view_plan_status`. Forward-
+ * compatible: if the backend hasn't shipped the `account` view yet the call
+ * fails and the profile screen simply keeps the section hidden.
+ */
+@HiltViewModel
+class StaffAccountViewModel @Inject constructor(
+    private val query: CachedQuery,
+    private val repo: StaffDataRepository,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(CachedUi<StaffPlanInfo>())
+    val state: StateFlow<CachedUi<StaffPlanInfo>> = _state.asStateFlow()
+
+    private var loaded = false
+
+    fun load(force: Boolean = false) {
+        if (!force && loaded && _state.value.data != null) return
+        loaded = true
+        query.run(viewModelScope, "staff.account", StaffPlanInfo.serializer(), _state) {
+            repo.account()
         }
     }
 }

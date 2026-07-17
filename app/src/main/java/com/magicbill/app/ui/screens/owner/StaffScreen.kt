@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -50,9 +47,11 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magicbill.app.core.PermissionMap
+import com.magicbill.app.core.StaffListData
 import com.magicbill.app.core.StaffRow
 import com.magicbill.app.core.billTime
 import com.magicbill.app.data.MBSession
+import com.magicbill.app.data.local.CachedUi
 import com.magicbill.app.ui.components.MBBadge
 import com.magicbill.app.ui.components.MBBadgeStatus
 import com.magicbill.app.ui.components.MBBottomSheet
@@ -69,11 +68,15 @@ import com.magicbill.app.ui.components.SkeletonScreen
 import com.magicbill.app.ui.components.showMBSnackbar
 import com.magicbill.app.ui.theme.Emerald
 import com.magicbill.app.ui.theme.Teal
+import kotlinx.coroutines.flow.SharedFlow
 
 /**
  * Staff management: the restaurant code (staff's login key) up top, then the
  * team. Everything mutates through the staff-manage Edge Function and takes
  * effect immediately.
+ *
+ * The same UI serves two callers via [StaffManageBody]: the owner (this
+ * composable) and a trusted staff manager ([StaffManagerScreen]).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +87,69 @@ fun StaffScreen(
     val licenseKey = owner.active?.licenseKey ?: return
     val state by viewModel.state.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+
+    LaunchedEffect(licenseKey) { viewModel.load(licenseKey) }
+
+    StaffManageBody(
+        state = state,
+        busy = busy,
+        events = viewModel.events,
+        managerMode = false,
+        onRefresh = { viewModel.load(licenseKey, force = true) },
+        onCreate = { name, role, pin, perms -> viewModel.create(licenseKey, name, role, pin, perms) },
+        onUpdate = { staff, name, role, perms -> viewModel.update(licenseKey, staff, name, role, perms) },
+        onResetPin = { staff -> viewModel.resetPin(licenseKey, staff, viewModel.generatePin()) },
+        onToggleActive = { staff -> viewModel.setActive(licenseKey, staff, !staff.is_active) },
+        onRemove = { staff -> viewModel.remove(licenseKey, staff) },
+        generatePin = viewModel::generatePin,
+    )
+}
+
+/**
+ * Staff-side management for a trusted manager (manage_staff permission). Same
+ * screen as the owner sees, but the manager can't grant manage_staff and can't
+ * edit their own record — both enforced server-side, mirrored in the UI.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StaffManagerScreen(
+    viewModel: StaffManagerViewModel = hiltViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val busy by viewModel.busy.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { viewModel.load() }
+
+    StaffManageBody(
+        state = state,
+        busy = busy,
+        events = viewModel.events,
+        managerMode = true,
+        onRefresh = { viewModel.load(force = true) },
+        onCreate = { name, role, pin, perms -> viewModel.create(name, role, pin, perms) },
+        onUpdate = { staff, name, role, perms -> viewModel.update(staff, name, role, perms) },
+        onResetPin = { staff -> viewModel.resetPin(staff, viewModel.generatePin()) },
+        onToggleActive = { staff -> viewModel.setActive(staff, !staff.is_active) },
+        onRemove = { staff -> viewModel.remove(staff) },
+        generatePin = viewModel::generatePin,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StaffManageBody(
+    state: CachedUi<StaffListData>,
+    busy: Boolean,
+    events: SharedFlow<StaffEvent>,
+    managerMode: Boolean,
+    onRefresh: () -> Unit,
+    onCreate: (String, String, String, PermissionMap) -> Unit,
+    onUpdate: (StaffRow, String, String, PermissionMap) -> Unit,
+    onResetPin: (StaffRow) -> Unit,
+    onToggleActive: (StaffRow) -> Unit,
+    onRemove: (StaffRow) -> Unit,
+    generatePin: () -> String,
+) {
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -93,9 +159,8 @@ fun StaffScreen(
     var confirmRemove by remember { mutableStateOf<StaffRow?>(null) }
     var confirmResetPin by remember { mutableStateOf<StaffRow?>(null) }
 
-    LaunchedEffect(licenseKey) { viewModel.load(licenseKey) }
     LaunchedEffect(Unit) {
-        viewModel.events.collect { event ->
+        events.collect { event ->
             when (event) {
                 is StaffEvent.PinCreated -> {
                     sheetMode = null
@@ -114,7 +179,7 @@ fun StaffScreen(
     Box(Modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = state.refreshing && state.data != null,
-            onRefresh = { viewModel.load(licenseKey, force = true) },
+            onRefresh = onRefresh,
         ) {
             LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
                 item {
@@ -137,7 +202,7 @@ fun StaffScreen(
                     data == null && state.refreshing -> item { SkeletonScreen() }
 
                     data == null && state.error != null -> item {
-                        MBErrorState(state.error!!, onRetry = { viewModel.load(licenseKey, force = true) })
+                        MBErrorState(state.error!!, onRetry = onRefresh)
                     }
 
                     data != null -> {
@@ -196,18 +261,13 @@ fun StaffScreen(
         StaffSheet(
             mode = mode,
             busy = busy,
-            suggestPin = viewModel::generatePin,
+            managerMode = managerMode,
+            suggestPin = generatePin,
             onDismiss = { sheetMode = null },
-            onCreate = { name, role, pin, perms ->
-                viewModel.create(licenseKey, name, role, pin, perms)
-            },
-            onUpdate = { staff, name, role, perms ->
-                viewModel.update(licenseKey, staff, name, role, perms)
-            },
+            onCreate = onCreate,
+            onUpdate = onUpdate,
             onResetPin = { staff -> confirmResetPin = staff },
-            onToggleActive = { staff ->
-                viewModel.setActive(licenseKey, staff, !staff.is_active)
-            },
+            onToggleActive = onToggleActive,
             onRemove = { staff -> confirmRemove = staff },
         )
     }
@@ -249,7 +309,7 @@ fun StaffScreen(
                     onClick = {
                         confirmRemove = null
                         sheetMode = null
-                        viewModel.remove(licenseKey, staff)
+                        onRemove(staff)
                     },
                 ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
             },
@@ -269,7 +329,7 @@ fun StaffScreen(
                 TextButton(
                     onClick = {
                         confirmResetPin = null
-                        viewModel.resetPin(licenseKey, staff, viewModel.generatePin())
+                        onResetPin(staff)
                     },
                 ) { Text("Reset PIN") }
             },
@@ -368,6 +428,7 @@ private fun StaffRowItem(staff: StaffRow, onClick: () -> Unit) {
 private fun StaffSheet(
     mode: SheetMode,
     busy: Boolean,
+    managerMode: Boolean,
     suggestPin: () -> String,
     onDismiss: () -> Unit,
     onCreate: (String, String, String, PermissionMap) -> Unit,
@@ -386,6 +447,10 @@ private fun StaffSheet(
     }
     var nameError by remember(mode) { mutableStateOf<String?>(null) }
     var pinError by remember(mode) { mutableStateOf<String?>(null) }
+
+    // Managers can never grant manage_staff — hide it entirely (server strips
+    // it too, this just avoids a toggle that would silently revert).
+    val excludeKeys = if (managerMode) setOf("manage_staff") else emptySet()
 
     MBBottomSheet(
         onDismissRequest = onDismiss,
@@ -428,6 +493,7 @@ private fun StaffSheet(
             PermissionEditor(
                 permissions = permissions,
                 onChange = { permissions = it },
+                excludeKeys = excludeKeys,
             )
 
             MBButton(
