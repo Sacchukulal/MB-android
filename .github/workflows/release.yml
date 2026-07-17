@@ -1,0 +1,76 @@
+name: Release APK
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check signing secrets
+        id: secrets
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "have_keystore=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_keystore=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing secrets absent — skipping CI release build (release is done locally)."
+          fi
+
+      - name: Set up JDK 17
+        if: steps.secrets.outputs.have_keystore == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        if: steps.secrets.outputs.have_keystore == 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore
+        if: steps.secrets.outputs.have_keystore == 'true'
+        run: |
+          mkdir -p keys
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keys/magic-bill-release.keystore
+
+      - name: Build signed release APK
+        if: steps.secrets.outputs.have_keystore == 'true'
+        env:
+          SUPABASE_URL: https://rlvygwituwywofwcwjsf.supabase.co
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          MB_KEYSTORE_FILE: keys/magic-bill-release.keystore
+          MB_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MB_KEY_ALIAS: magicbill
+          MB_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Prepare release assets
+        if: steps.secrets.outputs.have_keystore == 'true'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp app/build/outputs/apk/release/app-release.apk magic-bill.apk
+          cat > version.json <<EOF
+          {
+            "version": "$VERSION",
+            "apk_url": "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/magic-bill.apk",
+            "release_notes": "Magic Bill $VERSION"
+          }
+          EOF
+
+      - name: Create GitHub Release
+        if: steps.secrets.outputs.have_keystore == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            magic-bill.apk
+            version.json
+          generate_release_notes: true
