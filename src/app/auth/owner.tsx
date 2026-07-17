@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText, Button, Input } from "@/components/ui";
+import { registerMobileDevice } from "@/lib/device";
 import { loadOwnerRestaurants } from "@/lib/owner";
 import { loadOwnerRestaurant, saveOwnerRestaurant } from "@/lib/session-store";
 import { supabase } from "@/lib/supabase";
@@ -65,9 +66,11 @@ export default function OwnerLogin() {
       if (restaurants.length === 1) {
         await saveOwnerRestaurant(restaurants[0].licenseKey);
         setOwnerSession(restaurants, restaurants[0]);
+        registerMobileDevice(restaurants[0].licenseKey);
         router.replace("/dashboard");
       } else if (selected) {
         setOwnerSession(restaurants, selected);
+        registerMobileDevice(selected.licenseKey);
         router.replace("/dashboard");
       } else {
         setOwnerSession(restaurants);

@@ -106,7 +106,11 @@ export function BottomSheet({
             ) : null}
             <ScrollView
               className="px-5 pt-4"
-              contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+              // Generous floor: on edge-to-edge Android the gesture bar
+              // overlays the sheet, and insets can under-report inside Modals.
+              contentContainerStyle={{
+                paddingBottom: Math.max(insets.bottom, 24) + 36,
+              }}
               keyboardShouldPersistTaps="handled">
               {children}
             </ScrollView>

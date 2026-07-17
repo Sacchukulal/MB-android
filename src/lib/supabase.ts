@@ -25,6 +25,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: false,
   },
+  global: {
+    // Hard 10s budget on every request: on dead/flaky connections the
+    // default fetch can hang for 30-60s and the app feels frozen.
+    fetch: (input, init) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      return fetch(input as RequestInfo, {
+        ...(init as RequestInit),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+    },
+  },
 });
 
 // Refresh tokens while the app is foregrounded; pause when backgrounded.

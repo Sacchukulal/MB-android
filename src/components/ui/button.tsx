@@ -79,27 +79,38 @@ export function Button({
       <Pressable
         accessibilityRole="button"
         disabled={isDisabled}
-        className={cn("overflow-hidden", sizeClasses[size], className)}
+        className={cn(
+          "items-center justify-center overflow-hidden",
+          sizeClasses[size],
+          className
+        )}
         style={({ pressed }) => ({
           opacity: isDisabled ? 0.5 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
         })}
         {...props}>
         {({ pressed }) => (
-          <LinearGradient
-            colors={
-              pressed
-                ? [colors.accentDeep, colors.accentDeep]
-                : [colors.accentBright, colors.accentDeep]
-            }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            className="absolute inset-0"
-            style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
-            <View className="flex-1 items-center justify-center">
-              {label(pressed)}
-            </View>
-          </LinearGradient>
+          <>
+            {/* Gradient sits behind; the label stays in normal flow so the
+                button keeps its intrinsic size in any container. */}
+            <LinearGradient
+              colors={
+                pressed
+                  ? [colors.accentDeep, colors.accentDeep]
+                  : [colors.accentBright, colors.accentDeep]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+              }}
+            />
+            {label(pressed)}
+          </>
         )}
       </Pressable>
     );

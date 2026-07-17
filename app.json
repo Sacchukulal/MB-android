@@ -2,7 +2,7 @@
   "expo": {
     "name": "Magic Bill",
     "slug": "magic-bill",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "magicbill",
@@ -10,7 +10,7 @@
     "backgroundColor": "#0b1220",
     "android": {
       "package": "com.magicbill.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#0b1220",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -37,7 +37,16 @@
       "expo-sqlite",
       "expo-font",
       "expo-sharing",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

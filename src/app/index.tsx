@@ -9,6 +9,7 @@ import { useEffect } from "react";
 
 import { LoadingSpinner } from "@/components/ui";
 import { callFunction } from "@/lib/api";
+import { registerMobileDevice } from "@/lib/device";
 import { loadOwnerRestaurants, cachedOwnerRestaurants } from "@/lib/owner";
 import {
   clearStaffSession,
@@ -39,34 +40,42 @@ export default function Bootstrap() {
       // ---------- Staff door ----------
       const stored = await loadStaffSession();
       if (stored) {
-        // Verify server-side so owner changes (revocation, permission edits)
-        // apply immediately. Network failure -> proceed with cached session
-        // (offline mode); a definitive "revoked" -> clear and explain.
-        const res = await callFunction<VerifyResponse>("staff-session", {
-          action: "verify",
-          token: stored.token,
-        }).catch(() => null);
-
-        if (cancelled) return;
-
-        if (res && !res.ok) {
-          await clearStaffSession();
-          router.replace({ pathname: "/welcome", params: { revoked: "1" } });
-          return;
-        }
-
-        const fresh: StoredStaffSession =
-          res?.ok && res.staff && res.restaurant
-            ? { token: stored.token, staff: res.staff, restaurant: res.restaurant }
-            : stored;
-        if (res?.ok) await saveStaffSession(fresh);
-
-        setStaffSession(fresh.staff, {
+        // OPTIMISTIC: enter immediately with the stored session so the app
+        // opens instantly (even offline). Server verification runs in the
+        // background — a definitive "revoked" boots the user via markRevoked
+        // + the staff layout guard; fresh permissions get swapped in live.
+        setStaffSession(stored.staff, {
           licenseKey: "",
-          name: fresh.restaurant.name,
-          code: fresh.restaurant.code,
+          name: stored.restaurant.name,
+          code: stored.restaurant.code,
         });
         router.replace("/home");
+
+        callFunction<VerifyResponse>("staff-session", {
+          action: "verify",
+          token: stored.token,
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              await clearStaffSession();
+              useAuth.getState().markRevoked();
+              return;
+            }
+            if (res.staff && res.restaurant) {
+              const fresh: StoredStaffSession = {
+                token: stored.token,
+                staff: res.staff,
+                restaurant: res.restaurant,
+              };
+              await saveStaffSession(fresh);
+              useAuth.getState().setStaffSession(fresh.staff, {
+                licenseKey: "",
+                name: fresh.restaurant.name,
+                code: fresh.restaurant.code,
+              });
+            }
+          })
+          .catch(() => {}); // offline — cached session stands
         return;
       }
 
@@ -77,11 +86,36 @@ export default function Bootstrap() {
       if (cancelled) return;
 
       if (data.session) {
+        // OPTIMISTIC: cached restaurant list gets the owner in instantly;
+        // the network refresh updates the store in the background.
+        const cached = await cachedOwnerRestaurants();
+        if (cancelled) return;
+
+        if (cached && cached.length > 0) {
+          const savedKey = await loadOwnerRestaurant();
+          const selected = cached.find((r) => r.licenseKey === savedKey);
+          setOwnerSession(cached, selected);
+          router.replace(
+            !selected && cached.length > 1 ? "/auth/pick-restaurant" : "/dashboard"
+          );
+          registerMobileDevice((selected ?? cached[0]).licenseKey);
+          loadOwnerRestaurants()
+            .then((fresh) => {
+              if (fresh.length > 0) {
+                const sel = fresh.find((r) => r.licenseKey === savedKey);
+                useAuth.getState().setOwnerSession(fresh, sel ?? fresh[0]);
+              }
+            })
+            .catch(() => {});
+          return;
+        }
+
+        // No cache (first run on this device): one network try.
         let restaurants: RestaurantInfo[] | null = null;
         try {
           restaurants = await loadOwnerRestaurants();
         } catch {
-          restaurants = await cachedOwnerRestaurants();
+          restaurants = null;
         }
         if (cancelled) return;
 
@@ -89,11 +123,12 @@ export default function Bootstrap() {
           const savedKey = await loadOwnerRestaurant();
           const selected = restaurants.find((r) => r.licenseKey === savedKey);
           setOwnerSession(restaurants, selected);
-          if (!selected && restaurants.length > 1) {
-            router.replace("/auth/pick-restaurant");
-          } else {
-            router.replace("/dashboard");
-          }
+          router.replace(
+            !selected && restaurants.length > 1
+              ? "/auth/pick-restaurant"
+              : "/dashboard"
+          );
+          registerMobileDevice((selected ?? restaurants[0]).licenseKey);
           return;
         }
         if (restaurants && restaurants.length === 0) {
@@ -101,7 +136,7 @@ export default function Bootstrap() {
           router.replace("/subscribe");
           return;
         }
-        // First load failed with no cache: fall through to welcome so the
+        // Network failed with no cache: fall through to welcome so the
         // user isn't stuck on a spinner.
       }
 

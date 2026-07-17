@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
 } from "lucide-react-native";
 import { useEffect } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { fonts } from "@/constants/theme";
 import { useAuth, useCan } from "@/stores/auth";
@@ -18,6 +19,7 @@ import { useThemeColors } from "@/stores/theme";
 
 export default function StaffLayout() {
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const kind = useAuth((s) => s.kind);
   const revoked = useAuth((s) => s.revoked);
@@ -46,9 +48,10 @@ export default function StaffLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.line,
           borderTopWidth: 1,
-          height: 64,
+          // Edge-to-edge Android: keep the bar above the gesture nav area.
+          height: 60 + insets.bottom,
           paddingTop: 6,
-          paddingBottom: 8,
+          paddingBottom: Math.max(insets.bottom, 8),
         },
         tabBarActiveTintColor: colors.accentBright,
         tabBarInactiveTintColor: colors.textFaint,

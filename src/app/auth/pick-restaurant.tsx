@@ -5,6 +5,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText, Card } from "@/components/ui";
+import { registerMobileDevice } from "@/lib/device";
 import { saveOwnerRestaurant } from "@/lib/session-store";
 import { useAuth, type RestaurantInfo } from "@/stores/auth";
 import { useThemeColors } from "@/stores/theme";
@@ -19,6 +20,7 @@ export default function PickRestaurant() {
   const choose = async (r: RestaurantInfo) => {
     switchRestaurant(r);
     await saveOwnerRestaurant(r.licenseKey);
+    registerMobileDevice(r.licenseKey);
     router.replace("/dashboard");
   };
 
