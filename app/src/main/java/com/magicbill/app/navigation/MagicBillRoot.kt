@@ -24,6 +24,7 @@ import com.magicbill.app.ui.screens.auth.StaffLoginScreen
 import com.magicbill.app.ui.screens.auth.WelcomeScreen
 import com.magicbill.app.ui.screens.owner.OwnerShell
 import com.magicbill.app.ui.screens.staff.StaffShell
+import com.magicbill.app.ui.components.UpdateSheet
 import com.magicbill.app.ui.theme.MBMotion
 
 /**
@@ -34,6 +35,7 @@ import com.magicbill.app.ui.theme.MBMotion
 @Composable
 fun MagicBillRoot(viewModel: RootViewModel) {
     val session by viewModel.session.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
 
     Box(
         Modifier
@@ -56,6 +58,18 @@ fun MagicBillRoot(viewModel: RootViewModel) {
 
                 is MBSession.Staff -> StaffShell(rootViewModel = viewModel)
             }
+        }
+
+        // Update prompt floats over any signed-in world (never over login).
+        if (session !is MBSession.None && session !is MBSession.Loading &&
+            updateState.available != null && !updateState.sheetSuppressed
+        ) {
+            UpdateSheet(
+                state = updateState,
+                onUpdateNow = { viewModel.updates.downloadAndInstall() },
+                onDismiss = { viewModel.updates.dismiss() },
+                onOpenInstallSettings = { viewModel.updates.openInstallPermissionSettings() },
+            )
         }
     }
 }

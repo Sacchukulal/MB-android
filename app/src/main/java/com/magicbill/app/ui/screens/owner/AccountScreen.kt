@@ -54,8 +54,10 @@ import com.magicbill.app.ui.components.MBBadgeStatus
 import com.magicbill.app.ui.components.MBButton
 import com.magicbill.app.ui.components.MBButtonVariant
 import com.magicbill.app.ui.components.MBErrorState
+import com.magicbill.app.ui.components.MBSnackbarKind
 import com.magicbill.app.ui.components.SectionHeader
 import com.magicbill.app.ui.components.SkeletonScreen
+import com.magicbill.app.ui.components.showMBSnackbar
 import kotlinx.coroutines.launch
 
 /**
@@ -78,6 +80,8 @@ fun AccountScreen(
     val toolbarColor = MaterialTheme.colorScheme.surfaceContainer.toArgb()
     val scope = rememberCoroutineScope()
     var confirmLogout by remember { mutableStateOf(false) }
+    var checkingUpdates by remember { mutableStateOf(false) }
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
     LaunchedEffect(licenseKey) { viewModel.load(licenseKey) }
 
@@ -90,6 +94,7 @@ fun AccountScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     PullToRefreshBox(
         isRefreshing = state.refreshing && state.data != null,
         onRefresh = { viewModel.load(licenseKey, force = true) },
@@ -154,6 +159,31 @@ fun AccountScreen(
             InfoLine("Device", "${Build.BRAND.replaceFirstChar { it.uppercase() }} ${Build.MODEL}")
             InfoLine("Android", Build.VERSION.RELEASE)
             InfoLine("App version", BuildConfig.VERSION_NAME)
+            Spacer(Modifier.height(10.dp))
+            MBButton(
+                "Check for updates",
+                variant = MBButtonVariant.Outline,
+                loading = checkingUpdates,
+                onClick = {
+                    scope.launch {
+                        checkingUpdates = true
+                        val result = rootViewModel.checkForUpdates()
+                        checkingUpdates = false
+                        when (result) {
+                            "up-to-date" -> snackbar.showMBSnackbar(
+                                "You're up to date (v${BuildConfig.VERSION_NAME})",
+                                MBSnackbarKind.Success,
+                            )
+                            "error" -> snackbar.showMBSnackbar(
+                                "Couldn't check for updates — try again later.",
+                                MBSnackbarKind.Error,
+                            )
+                            // "update": the update sheet opens by itself.
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(32.dp))
             MBButton(
@@ -165,6 +195,11 @@ fun AccountScreen(
 
             Spacer(Modifier.height(130.dp))
         }
+    }
+    com.magicbill.app.ui.components.MBSnackbarHost(
+        snackbar,
+        Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
+    )
     }
 
     if (confirmLogout) {
