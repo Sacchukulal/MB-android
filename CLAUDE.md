@@ -12,7 +12,10 @@
   `SectionHeader` + whitespace; lists use `ListRow`; motion tokens in
   `ui/theme/Motion.kt`. Payment-mode colors are entity-fixed in
   `ui/theme/Color.kt` (CVD-validated) — don't repaint them.
-- Data rule: every screen reads through `CachedQuery` (cache-first, silent
-  refresh). Never block cached content with a spinner.
+- Data rule: OWNER dashboard/reports/bill-detail read from the local SQLite
+  mirror (`OwnerLocalDao`, topped up by `OwnerSync` — last synced data is
+  always available offline, any range). Staff + account screens read through
+  `CachedQuery` (cache-first, silent refresh). Never block cached content
+  with a spinner.
 - Staff clients never receive the license key; all staff data flows through
   Edge Functions (`staff-login`, `staff-data`, `staff-manage`).
