@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
@@ -107,16 +109,79 @@ fun MBTextField(
                 else -> visualTransformation
             },
             shape = MaterialTheme.shapes.large,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.Transparent,
-                disabledBorderColor = Color.Transparent,
-                errorBorderColor = MaterialTheme.colorScheme.error,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                errorContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            ),
+            colors = mbTextFieldColors(),
         )
     }
 }
+
+/**
+ * [TextFieldValue] variant for callers that reformat input and must control
+ * the cursor (e.g. the restaurant-code field, which auto-inserts a hyphen —
+ * the String overload would leave the cursor stranded left of it).
+ */
+@Composable
+fun MBTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    errorText: String? = null,
+    leadingIcon: ImageVector? = null,
+    singleLine: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+) {
+    val isError = errorText != null
+    val labelColor by animateColorAsState(
+        if (isError) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        label = "fieldLabel",
+    )
+
+    Column(modifier) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = labelColor,
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+        )
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = placeholder?.let {
+                { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)) }
+            },
+            leadingIcon = leadingIcon?.let {
+                { Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            },
+            supportingText = errorText?.let {
+                { Text(it, color = MaterialTheme.colorScheme.error) }
+            },
+            isError = isError,
+            singleLine = singleLine,
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
+            shape = MaterialTheme.shapes.large,
+            colors = mbTextFieldColors(),
+        )
+    }
+}
+
+/** Shared field palette — explicit text colors because screens have no Surface. */
+@Composable
+private fun mbTextFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+    errorTextColor = MaterialTheme.colorScheme.onSurface,
+    cursorColor = MaterialTheme.colorScheme.primary,
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = Color.Transparent,
+    disabledBorderColor = Color.Transparent,
+    errorBorderColor = MaterialTheme.colorScheme.error,
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    errorContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+)

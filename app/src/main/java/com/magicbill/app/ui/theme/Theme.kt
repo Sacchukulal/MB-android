@@ -1,6 +1,7 @@
 package com.magicbill.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -98,12 +99,21 @@ fun MagicBillTheme(
     darkTheme: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    val colors = if (darkTheme) DarkColors else LightColors
     CompositionLocalProvider(LocalMBDarkTheme provides darkTheme) {
         MaterialTheme(
-            colorScheme = if (darkTheme) DarkColors else LightColors,
+            colorScheme = colors,
             typography = MBTypography,
             shapes = MBShapes,
-            content = content,
-        )
+        ) {
+            // Screens draw on plain Boxes (open canvas), never a Surface, so
+            // LocalContentColor would stay at its M3 default — BLACK — making
+            // every default-colored Text invisible in dark mode. Anchor it to
+            // onBackground here so both themes read correctly everywhere.
+            CompositionLocalProvider(
+                LocalContentColor provides colors.onBackground,
+                content = content,
+            )
+        }
     }
 }
