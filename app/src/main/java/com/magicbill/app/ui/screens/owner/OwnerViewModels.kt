@@ -22,6 +22,10 @@ import javax.inject.Inject
  *  2. run a sync; when it lands, recompute and update silently
  *  3. on sync failure keep the local data and quietly flag `fromCacheOnly`
  * A blocking error exists only when this license has never synced at all.
+ *
+ * The previous state is intentionally NOT cleared here: on a range switch the
+ * old report stays on screen for the ~20ms the local compute takes, then the
+ * new one swaps in as a single emission — no collapse, no skeleton flash.
  */
 private fun <T> localFirstLoad(
     scope: kotlinx.coroutines.CoroutineScope,
@@ -31,21 +35,19 @@ private fun <T> localFirstLoad(
     force: Boolean,
     compute: suspend () -> T?,
     lastSyncAt: suspend () -> Long?,
-) {
-    scope.launch {
-        val local = compute()
-        state.value = CachedUi(data = local, updatedAt = lastSyncAt(), refreshing = true)
+): kotlinx.coroutines.Job = scope.launch {
+    val local = compute()
+    state.value = CachedUi(data = local, updatedAt = lastSyncAt(), refreshing = true)
 
-        val error = sync.sync(licenseKey, force)
-        val fresh = compute()
-        state.value = CachedUi(
-            data = fresh,
-            updatedAt = lastSyncAt(),
-            refreshing = false,
-            fromCacheOnly = error != null && fresh != null,
-            error = if (fresh == null) error ?: "Something went wrong — pull to retry." else null,
-        )
-    }
+    val error = sync.sync(licenseKey, force)
+    val fresh = compute()
+    state.value = CachedUi(
+        data = fresh,
+        updatedAt = lastSyncAt(),
+        refreshing = false,
+        fromCacheOnly = error != null && fresh != null,
+        error = if (fresh == null) error ?: "Something went wrong — pull to retry." else null,
+    )
 }
 
 @HiltViewModel
@@ -58,6 +60,7 @@ class DashboardViewModel @Inject constructor(
     val state: StateFlow<CachedUi<DashboardData>> = _state.asStateFlow()
 
     private var loadedKey: String? = null
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     init {
         // Another screen (or connectivity returning) synced — recompute quietly.
@@ -77,10 +80,13 @@ class DashboardViewModel @Inject constructor(
 
     fun load(licenseKey: String, force: Boolean = false) {
         if (!force && loadedKey == licenseKey && _state.value.data != null) return
+        // Only a RESTAURANT switch clears the screen (different business —
+        // skeleton is correct); otherwise old content stays until fresh lands.
         if (loadedKey != licenseKey) _state.value = CachedUi()
         loadedKey = licenseKey
         sync.activeLicense = licenseKey
-        localFirstLoad(
+        loadJob?.cancel()
+        loadJob = localFirstLoad(
             viewModelScope, _state, sync, licenseKey, force,
             compute = { repo.dashboardLocal(licenseKey) },
             lastSyncAt = { repo.lastSyncAt(licenseKey) },
@@ -98,6 +104,8 @@ class ReportsViewModel @Inject constructor(
     val state: StateFlow<CachedUi<ReportData>> = _state.asStateFlow()
 
     private var loadedRange: String? = null
+    private var loadedLicense: String? = null
+    private var loadJob: kotlinx.coroutines.Job? = null
     private var current: Triple<String, String, String>? = null
 
     init {
@@ -118,11 +126,16 @@ class ReportsViewModel @Inject constructor(
     fun load(licenseKey: String, fromDay: String, toDay: String, force: Boolean = false) {
         val rangeKey = "report.$licenseKey.$fromDay.$toDay"
         if (!force && loadedRange == rangeKey && _state.value.data != null) return
-        if (loadedRange != rangeKey) _state.value = CachedUi()
+        // Only a RESTAURANT switch clears the screen; a range switch keeps the
+        // previous report visible until the new one computes (~20ms), so the
+        // list never collapses and re-expands.
+        if (loadedLicense != licenseKey) _state.value = CachedUi()
+        loadedLicense = licenseKey
         loadedRange = rangeKey
         current = Triple(licenseKey, fromDay, toDay)
         sync.activeLicense = licenseKey
-        localFirstLoad(
+        loadJob?.cancel()
+        loadJob = localFirstLoad(
             viewModelScope, _state, sync, licenseKey, force,
             compute = { repo.reportLocal(licenseKey, fromDay, toDay) },
             lastSyncAt = { repo.lastSyncAt(licenseKey) },

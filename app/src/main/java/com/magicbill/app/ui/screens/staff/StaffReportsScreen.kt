@@ -93,12 +93,21 @@ fun StaffReportsScreen(
 
     LaunchedEffect(fromDay, toDay) { viewModel.load(fromDay, toDay) }
 
+    // A new range means a new story — glide to the top instead of letting the
+    // list clamp to a random offset when the content gets shorter.
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(fromDay, toDay) {
+        if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
+            listState.animateScrollToItem(0)
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = state.refreshing && state.data != null,
         onRefresh = { viewModel.load(fromDay, toDay, force = true) },
         modifier = Modifier.fillMaxSize(),
     ) {
-        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
             item {
                 Spacer(Modifier.statusBarsPadding().height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

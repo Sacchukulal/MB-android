@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -118,13 +119,23 @@ fun ReportsScreen(
         viewModel.load(licenseKey, fromDay, toDay)
     }
 
+    // A new range means a new story — glide to the top instead of letting the
+    // list clamp to a random offset when the content gets shorter.
+    val listState = rememberLazyListState()
+    LaunchedEffect(fromDay, toDay) {
+        if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
+            listState.animateScrollToItem(0)
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = state.refreshing && state.data != null,
         onRefresh = { viewModel.load(licenseKey, fromDay, toDay, force = true) },
         modifier = Modifier.fillMaxSize(),
     ) {
         LazyColumn(
-            Modifier
+            state = listState,
+            modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 20.dp),
         ) {

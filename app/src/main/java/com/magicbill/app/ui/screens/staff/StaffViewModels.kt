@@ -44,13 +44,18 @@ class StaffReportsViewModel @Inject constructor(
     val state: StateFlow<CachedUi<StaffReport>> = _state.asStateFlow()
 
     private var loadedRange: String? = null
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     fun load(fromDay: String, toDay: String, force: Boolean = false) {
         val key = "staff.report.$fromDay.$toDay"
         if (!force && loadedRange == key && _state.value.data != null) return
-        if (loadedRange != key) _state.value = CachedUi()
         loadedRange = key
-        query.run(viewModelScope, key, StaffReport.serializer(), _state) {
+        // No manual reset: CachedQuery's first emission replaces the state in
+        // one frame (cached range → instant swap; uncached → skeleton), so the
+        // list never collapses for a frame in between. Cancel any in-flight
+        // load so a slow older range can't overwrite a newer one.
+        loadJob?.cancel()
+        loadJob = query.run(viewModelScope, key, StaffReport.serializer(), _state) {
             repo.report(fromDay, toDay)
         }
     }
