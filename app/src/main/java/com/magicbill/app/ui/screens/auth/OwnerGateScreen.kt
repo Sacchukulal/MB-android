@@ -96,12 +96,23 @@ fun OwnerGateScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     // Coming back from the browser (subscribe flow) → re-check automatically.
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner, gate) {
+    // Only a REAL return (pause → resume) counts: addObserver replays the
+    // current lifecycle state, so a naive ON_RESUME check fires on every
+    // registration and spams checks.
+    val currentGate by androidx.compose.runtime.rememberUpdatedState(gate)
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        var sawPause = false
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
-                (gate is GateState.NoSubscription || gate is GateState.PendingActivation)
-            ) {
-                viewModel.quietRetry()
+            when {
+                event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> sawPause = true
+                event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && sawPause -> {
+                    sawPause = false
+                    if (currentGate is GateState.NoSubscription ||
+                        currentGate is GateState.PendingActivation
+                    ) {
+                        viewModel.quietRetry()
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

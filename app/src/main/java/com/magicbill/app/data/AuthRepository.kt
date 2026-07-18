@@ -1,6 +1,7 @@
 package com.magicbill.app.data
 
 import android.util.Log
+import com.magicbill.app.core.FriendlyException
 import com.magicbill.app.core.MBErrors
 import com.magicbill.app.core.OwnerRestaurantRow
 import com.magicbill.app.core.RestaurantInfo
@@ -169,6 +170,9 @@ class AuthRepository @Inject constructor(
         resolveOwnerGate()
     }
 
+    @Volatile
+    private var resolveJob: kotlinx.coroutines.Job? = null
+
     /**
      * Resolves what an authenticated owner should see: dashboard (usable
      * license), pending-activation, no-subscription, or unreachable-with-retry.
@@ -177,7 +181,8 @@ class AuthRepository @Inject constructor(
      */
     fun resolveOwnerGate(quiet: Boolean = false) {
         if (!quiet) setSession(MBSession.OwnerGate(GateState.Checking), "gate: checking")
-        scope.launch {
+        if (resolveJob?.isActive == true) return // a check is already in flight
+        resolveJob = scope.launch {
             try {
                 val rows = withTimeoutOrNull(12_000) { fetchOwnerRows() }
                 if (rows == null) {
@@ -185,7 +190,7 @@ class AuthRepository @Inject constructor(
                     onGateUnreachable(MBErrors.TIMEOUT)
                     return@launch
                 }
-                applyOwnerRows(rows, "gate: resolved")
+                applyOwnerRows(rows, "gate: resolved", demote = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -202,8 +207,13 @@ class AuthRepository @Inject constructor(
         setSession(MBSession.OwnerGate(GateState.Unreachable(message)), "gate: unreachable")
     }
 
-    /** Classifies owner rows into the right session state and caches the result. */
-    private suspend fun applyOwnerRows(rows: List<OwnerRestaurantRow>, why: String) {
+    /**
+     * Classifies owner rows into the right session state. Empty results only
+     * ever downgrade the session when [demote] is set (explicit gate check) —
+     * a background refresh must never yank a working dashboard away or
+     * overwrite good cache because of a transient empty response.
+     */
+    private suspend fun applyOwnerRows(rows: List<OwnerRestaurantRow>, why: String, demote: Boolean) {
         val usable = rows
             .filter { it.license_key != null }
             .filter { !(it.licenses?.status ?: "").equals("created", ignoreCase = true) }
@@ -215,33 +225,50 @@ class AuthRepository @Inject constructor(
                     status = it.licenses?.status,
                 )
             }
-        cache.write("owner.restaurants", ListSerializer(RestaurantInfo.serializer()), usable)
         when {
             usable.isNotEmpty() -> {
+                cache.write("owner.restaurants", ListSerializer(RestaurantInfo.serializer()), usable)
                 val current = _session.value
                 val active = (current as? MBSession.Owner)?.active?.let { a ->
                     usable.firstOrNull { it.licenseKey == a.licenseKey }
                 } ?: pickActive(usable)
                 setSession(MBSession.Owner(usable, active), why)
             }
-            rows.any { it.license_key != null } ->
+            !demote -> Log.w(TAG, "[AUTH] refresh returned no usable licenses — keeping current session")
+            rows.any { it.license_key != null } -> {
+                cache.write("owner.restaurants", ListSerializer(RestaurantInfo.serializer()), usable)
                 setSession(MBSession.OwnerGate(GateState.PendingActivation), "$why: pending")
-            else ->
+            }
+            else -> {
+                cache.write("owner.restaurants", ListSerializer(RestaurantInfo.serializer()), usable)
                 setSession(MBSession.OwnerGate(GateState.NoSubscription), "$why: no subscription")
+            }
         }
     }
 
-    private suspend fun fetchOwnerRows(): List<OwnerRestaurantRow> =
-        supabase.from("owners")
+    /**
+     * Fetches the owner's license rows. MUST wait for auth to finish loading
+     * the stored session first: a query fired before initialization goes out
+     * without the user JWT and RLS silently returns ZERO rows — indistinguishable
+     * from "no subscription" and the cause of a nasty gate-flash race.
+     */
+    private suspend fun fetchOwnerRows(): List<OwnerRestaurantRow> {
+        withTimeoutOrNull(5_000) { supabase.auth.awaitInitialization() }
+        if (supabase.auth.currentSessionOrNull() == null) {
+            Log.w(TAG, "[AUTH] no auth session after initialization")
+            throw FriendlyException(MBErrors.SESSION_EXPIRED)
+        }
+        return supabase.from("owners")
             .select(Columns.raw("license_key, licenses(restaurant_name, restaurant_code, status)"))
             .decodeList<OwnerRestaurantRow>()
+    }
 
     /** Background restaurant refresh — keeps the switcher fresh, never boots on network failure. */
     fun refreshOwnerRestaurants() {
         scope.launch {
             runCatching {
                 val rows = withTimeoutOrNull(8_000) { fetchOwnerRows() } ?: return@launch
-                applyOwnerRows(rows, "refresh")
+                applyOwnerRows(rows, "refresh", demote = false)
             }.onFailure { Log.w(TAG, "[NET] silent refresh failed: ${it.message}") }
         }
     }
