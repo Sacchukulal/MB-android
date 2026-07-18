@@ -26,4 +26,8 @@ object StorageModule {
 
     @Provides
     fun provideKvCacheDao(db: MagicBillDatabase): KvCacheDao = db.kvCacheDao()
+
+    @Provides
+    fun provideOwnerLocalDao(db: MagicBillDatabase): com.magicbill.app.data.local.OwnerLocalDao =
+        db.ownerLocalDao()
 }

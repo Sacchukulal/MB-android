@@ -1,45 +1,71 @@
 package com.magicbill.app.data
 
+import com.magicbill.app.core.BillItem
 import com.magicbill.app.core.BillRow
 import com.magicbill.app.core.DashboardData
-import com.magicbill.app.core.DaySummaryLite
-import com.magicbill.app.core.ExpenseAmount
 import com.magicbill.app.core.IST
 import com.magicbill.app.core.ItemAggDto
 import com.magicbill.app.core.ReportData
 import com.magicbill.app.core.TodayStats
 import com.magicbill.app.core.TrendDay
-import com.magicbill.app.core.istDayEndUtc
-import com.magicbill.app.core.istDayStartUtc
 import com.magicbill.app.core.istDayString
 import com.magicbill.app.core.shiftDay
+import com.magicbill.app.data.local.BillEntity
+import com.magicbill.app.data.local.OwnerLocalDao
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
-import io.github.jan.supabase.postgrest.query.Order
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Owner data (RLS-scoped reads via supabase-kt).
- * - "Today" is always computed live from `bills` (daily_summaries freshness
- *   depends on external refresh calls; bills sync continuously).
- * - History (yesterday and older) comes from `daily_summaries`.
+ * Owner data, computed LOCALLY from the SQLite mirror ([OwnerLocalDao]).
+ * The network never blocks a screen: [OwnerSync] tops up the mirror and these
+ * functions aggregate whatever is on the phone — so the last synced data is
+ * always available, fully offline, for any date range.
  * Staff data access does NOT use this — it goes through Edge Functions so the
  * license key never reaches staff clients.
  */
 @Singleton
 class OwnerDataRepository @Inject constructor(
     private val supabase: SupabaseClient,
+    private val dao: OwnerLocalDao,
+    private val json: Json,
 ) {
     private companion object {
         const val BILL_COLUMNS =
             "id, bill_number, token_number, order_type, table_number, payment_mode, subtotal, gst, total, items, billed_at"
     }
+
+    /** Epoch ms of the last successful sync, or null if never synced. */
+    suspend fun lastSyncAt(licenseKey: String): Long? =
+        dao.syncState(licenseKey)?.lastSyncAt
+
+    // ---------------- local aggregation ----------------
+
+    private fun BillEntity.toBillRow(): BillRow = BillRow(
+        id = id,
+        bill_number = billNumber,
+        token_number = tokenNumber,
+        order_type = orderType,
+        table_number = tableNumber,
+        payment_mode = paymentMode,
+        subtotal = subtotal,
+        gst = gst,
+        total = total,
+        items = itemsJson?.let {
+            runCatching { json.decodeFromString(ListSerializer(BillItem.serializer()), it) }.getOrNull()
+        },
+        billed_at = billedAt,
+        customer_name = customerName,
+        customer_phone = customerPhone,
+    )
 
     private data class Agg(
         val total: Double,
@@ -86,38 +112,20 @@ class OwnerDataRepository @Inject constructor(
         )
     }
 
-    private suspend fun fetchBillsInRange(licenseKey: String, fromDay: String, toDay: String): List<BillRow> =
-        supabase.from("bills").select(Columns.raw(BILL_COLUMNS)) {
-            filter {
-                eq("license_key", licenseKey)
-                gte("billed_at", istDayStartUtc(fromDay).toString())
-                lt("billed_at", istDayEndUtc(toDay).toString())
-            }
-            order("billed_at", Order.DESCENDING)
-            limit(2000)
-        }.decodeList<BillRow>()
-
-    suspend fun fetchDashboard(licenseKey: String): DashboardData = coroutineScope {
+    /**
+     * Dashboard from local data. Returns null when this license has never
+     * synced (first run needs one online fetch; after that, always available).
+     */
+    suspend fun dashboardLocal(licenseKey: String): DashboardData? = withContext(Dispatchers.Default) {
+        if (dao.syncState(licenseKey) == null) return@withContext null
         val today = istDayString()
         val trendStart = shiftDay(today, -13)
 
-        val todayBillsDeferred = async { fetchBillsInRange(licenseKey, today, today) }
-        val summariesDeferred = async {
-            supabase.from("daily_summaries").select(Columns.raw("day, total")) {
-                filter {
-                    eq("license_key", licenseKey)
-                    gte("day", trendStart)
-                    lt("day", today)
-                }
-                order("day", Order.ASCENDING)
-            }.decodeList<DaySummaryLite>()
-        }
-
-        val todayBills = todayBillsDeferred.await()
-        val summaries = summariesDeferred.await()
+        val todayBills = dao.billsInRange(licenseKey, today, today).map { it.toBillRow() }
+        val summaries = dao.summariesInRange(licenseKey, trendStart, shiftDay(today, -1))
 
         val agg = aggregate(todayBills)
-        val summaryByDay = summaries.associate { it.day to (it.total ?: 0.0) }
+        val summaryByDay = summaries.associate { it.day to it.total }
 
         val trend = buildList {
             for (i in 13 downTo 1) {
@@ -131,8 +139,9 @@ class OwnerDataRepository @Inject constructor(
         val hourCounts = IntArray(24)
         for (b in todayBills) {
             runCatching {
-                val hour = Instant.parse(if (b.billed_at.endsWith("Z") || b.billed_at.contains('+')) b.billed_at else b.billed_at + "Z")
-                    .atZone(IST).hour
+                val hour = Instant.parse(
+                    if (b.billed_at.endsWith("Z") || b.billed_at.contains('+')) b.billed_at else b.billed_at + "Z",
+                ).atZone(IST).hour
                 hourCounts[hour]++
             }
         }
@@ -153,56 +162,47 @@ class OwnerDataRepository @Inject constructor(
         )
     }
 
-    suspend fun fetchReport(licenseKey: String, fromDay: String, toDay: String): ReportData = coroutineScope {
-        val billsDeferred = async { fetchBillsInRange(licenseKey, fromDay, toDay) }
-        val expensesDeferred = async {
-            supabase.from("expenses").select(Columns.raw("amount")) {
-                filter {
-                    eq("license_key", licenseKey)
-                    gte("spent_at", istDayStartUtc(fromDay).toString())
-                    lt("spent_at", istDayEndUtc(toDay).toString())
-                }
-            }.decodeList<ExpenseAmount>()
+    /** Report from local data. Null when this license has never synced. */
+    suspend fun reportLocal(licenseKey: String, fromDay: String, toDay: String): ReportData? =
+        withContext(Dispatchers.Default) {
+            if (dao.syncState(licenseKey) == null) return@withContext null
+
+            val bills = dao.billsInRange(licenseKey, fromDay, toDay).map { it.toBillRow() }
+            val agg = aggregate(bills)
+            val expenseTotal = dao.expenseTotalInRange(licenseKey, fromDay, toDay)
+
+            // Compare chip: total of the previous period of equal length.
+            val rangeDays = ChronoUnit.DAYS.between(
+                java.time.LocalDate.parse(fromDay), java.time.LocalDate.parse(toDay),
+            ) + 1
+            val prevSummaries = dao.summariesInRange(
+                licenseKey, shiftDay(fromDay, -rangeDays), shiftDay(fromDay, -1),
+            )
+            // Null (not 0) when we have no previous-period data — keeps the
+            // compare chip neutral instead of claiming an infinite jump.
+            val prevTotal = if (prevSummaries.isEmpty()) null else prevSummaries.sumOf { it.total }
+
+            ReportData(
+                fromDay = fromDay,
+                toDay = toDay,
+                total = agg.total,
+                subtotal = agg.subtotal,
+                gst = agg.gst,
+                billCount = bills.size,
+                avg = if (bills.isNotEmpty()) agg.total / bills.size else 0.0,
+                cash = agg.cash, card = agg.card, upi = agg.upi, credit = agg.credit,
+                items = agg.items,
+                expenseTotal = expenseTotal,
+                bills = bills,
+                prevTotal = prevTotal,
+            )
         }
-        // Compare chip: total of the previous period of equal length.
-        val rangeDays = ChronoUnit.DAYS.between(
-            java.time.LocalDate.parse(fromDay), java.time.LocalDate.parse(toDay),
-        ) + 1
-        val prevDeferred = async {
-            runCatching {
-                supabase.from("daily_summaries").select(Columns.raw("day, total")) {
-                    filter {
-                        eq("license_key", licenseKey)
-                        gte("day", shiftDay(fromDay, -rangeDays))
-                        lt("day", fromDay)
-                    }
-                }.decodeList<DaySummaryLite>().sumOf { it.total ?: 0.0 }
-            }.getOrNull()
-        }
 
-        val bills = billsDeferred.await()
-        val agg = aggregate(bills)
-        val expenseTotal = expensesDeferred.await().sumOf { it.amount ?: 0.0 }
-
-        ReportData(
-            fromDay = fromDay,
-            toDay = toDay,
-            total = agg.total,
-            subtotal = agg.subtotal,
-            gst = agg.gst,
-            billCount = bills.size,
-            avg = if (bills.isNotEmpty()) agg.total / bills.size else 0.0,
-            cash = agg.cash, card = agg.card, upi = agg.upi, credit = agg.credit,
-            items = agg.items,
-            expenseTotal = expenseTotal,
-            bills = bills,
-            prevTotal = prevDeferred.await(),
-        )
-    }
-
-    /** Full bill (incl. customer fields) for the receipt view. */
-    suspend fun fetchBill(billId: String): BillRow? =
-        supabase.from("bills").select(Columns.raw("$BILL_COLUMNS, customer_name, customer_phone")) {
+    /** Full bill for the receipt view: local mirror first, network fallback. */
+    suspend fun fetchBill(billId: String): BillRow? {
+        dao.bill(billId)?.let { return it.toBillRow() }
+        return supabase.from("bills").select(Columns.raw("$BILL_COLUMNS, customer_name, customer_phone")) {
             filter { eq("id", billId) }
         }.decodeList<BillRow>().firstOrNull()
+    }
 }

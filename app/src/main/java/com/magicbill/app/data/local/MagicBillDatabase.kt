@@ -38,10 +38,17 @@ interface KvCacheDao {
 }
 
 @Database(
-    entities = [KvEntry::class],
-    version = 2,
+    entities = [
+        KvEntry::class,
+        BillEntity::class,
+        DaySummaryEntity::class,
+        ExpenseEntity::class,
+        SyncStateEntity::class,
+    ],
+    version = 3,
     exportSchema = false,
 )
 abstract class MagicBillDatabase : RoomDatabase() {
     abstract fun kvCacheDao(): KvCacheDao
+    abstract fun ownerLocalDao(): OwnerLocalDao
 }
