@@ -48,7 +48,10 @@ class CachedQuery @Inject constructor(
                 updatedAt = System.currentTimeMillis(),
                 refreshing = false,
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            android.util.Log.w("MB/Cache", "[CACHE] refresh failed for $key: ${e::class.simpleName}")
             val current = state.value
             state.value = current.copy(
                 refreshing = false,
@@ -59,11 +62,7 @@ class CachedQuery @Inject constructor(
     }
 
     companion object {
-        fun friendlyError(e: Exception): String = when {
-            e is java.io.IOException || e.message?.contains("timeout", true) == true ->
-                "Couldn't reach the server. Check your internet and try again."
-            else -> "Something went wrong — pull to retry."
-        }
+        fun friendlyError(e: Exception): String = com.magicbill.app.core.MBErrors.network(e)
     }
 }
 

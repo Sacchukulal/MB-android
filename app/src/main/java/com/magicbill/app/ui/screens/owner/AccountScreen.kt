@@ -72,7 +72,7 @@ fun AccountScreen(
     owner: MBSession.Owner,
     viewModel: AccountViewModel = hiltViewModel(),
 ) {
-    val licenseKey = owner.active?.licenseKey ?: return
+    val licenseKey = owner.active.licenseKey
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dark by rootViewModel.darkTheme.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -262,6 +262,25 @@ private fun AccountContent(
     Spacer(Modifier.height(14.dp))
 
     val status = (license.status ?: "").lowercase()
+    val statusMessage = when (status) {
+        "active", "trial" -> null
+        "created", "pending" ->
+            "Your subscription is being activated. This usually takes a few seconds."
+        "grace" -> "Your payment is overdue — renew soon to avoid interruption."
+        "halted" -> "Your subscription is paused because a payment failed. Renew to continue."
+        "cancelled" -> "Your subscription was cancelled. Resubscribe anytime to continue."
+        "completed", "expired" ->
+            "Your subscription has expired. Renew at magicbill.in to continue."
+        else -> null
+    }
+    statusMessage?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Spacer(Modifier.height(10.dp))
+    }
     val (actionLabel, destination) = when (status) {
         "active" -> "Manage subscription" to "/dashboard/billing"
         "trial" -> "Subscribe now" to "/dashboard/billing"

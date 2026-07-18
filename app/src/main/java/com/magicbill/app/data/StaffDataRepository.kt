@@ -1,6 +1,8 @@
 package com.magicbill.app.data
 
 import com.magicbill.app.core.BillRow
+import com.magicbill.app.core.FriendlyException
+import com.magicbill.app.core.MBErrors
 import com.magicbill.app.core.StaffBillDetail
 import com.magicbill.app.core.StaffDashboard
 import com.magicbill.app.core.StaffPlanInfo
@@ -49,7 +51,13 @@ class StaffDataRepository @Inject constructor(
                 auth.markStaffRevoked()
                 throw RevokedException()
             }
-            throw IOException(envelope.reason ?: "server")
+            throw FriendlyException(
+                when (envelope.reason) {
+                    "forbidden" -> "You don't have permission to view this. Ask your manager."
+                    "not-found" -> "This item is no longer available."
+                    else -> MBErrors.SERVER_DOWN
+                },
+            )
         }
         // Keep permissions fresh everywhere (owner edits apply immediately).
         envelope.permissions?.let { fresh ->

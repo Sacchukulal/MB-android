@@ -19,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.magicbill.app.data.MBSession
 import com.magicbill.app.ui.RootViewModel
+import com.magicbill.app.ui.screens.auth.OwnerGateScreen
 import com.magicbill.app.ui.screens.auth.OwnerLoginScreen
 import com.magicbill.app.ui.screens.auth.StaffLoginScreen
 import com.magicbill.app.ui.screens.auth.WelcomeScreen
@@ -53,6 +54,8 @@ fun MagicBillRoot(viewModel: RootViewModel) {
                 is MBSession.Loading -> Unit // native splash is covering
 
                 is MBSession.None -> AuthFlow(viewModel, revoked = s.revoked)
+
+                is MBSession.OwnerGate -> OwnerGateScreen(gate = s.gate)
 
                 is MBSession.Owner -> OwnerShell(rootViewModel = viewModel)
 

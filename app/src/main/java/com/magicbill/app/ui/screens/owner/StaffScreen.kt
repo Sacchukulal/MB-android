@@ -84,7 +84,7 @@ fun StaffScreen(
     owner: MBSession.Owner,
     viewModel: StaffViewModel = hiltViewModel(),
 ) {
-    val licenseKey = owner.active?.licenseKey ?: return
+    val licenseKey = owner.active.licenseKey
     val state by viewModel.state.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
 

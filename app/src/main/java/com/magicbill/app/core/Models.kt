@@ -110,17 +110,21 @@ data class RestaurantInfo(
     val licenseKey: String,
     val name: String,
     val code: String? = null,
+    /** License status (active/created/expired/...). Null on old cached rows. */
+    val status: String? = null,
 )
 
 @Serializable
 data class LicenseEmbed(
     val restaurant_name: String? = null,
     val restaurant_code: String? = null,
+    val status: String? = null,
 )
 
 @Serializable
 data class OwnerRestaurantRow(
-    val license_key: String,
+    /** NULL for owners who signed up but haven't subscribed yet (migration 0002). */
+    val license_key: String? = null,
     val licenses: LicenseEmbed? = null,
 )
 

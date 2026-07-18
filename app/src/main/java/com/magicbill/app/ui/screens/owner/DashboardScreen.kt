@@ -76,7 +76,7 @@ fun DashboardScreen(
     onOpenBill: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
-    val licenseKey = owner.active?.licenseKey ?: return
+    val licenseKey = owner.active.licenseKey
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(licenseKey) { viewModel.load(licenseKey) }

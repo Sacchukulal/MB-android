@@ -72,7 +72,7 @@ fun OwnerShell(rootViewModel: RootViewModel) {
                     billId = route.billId,
                     isStaff = false,
                     onBack = { navController.popBackStack() },
-                    restaurantName = owner.active?.name ?: "Magic Bill",
+                    restaurantName = owner.active.name,
                 )
             }
         }
@@ -86,6 +86,23 @@ private fun OwnerTabs(
     onOpenBill: (String) -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+
+    // Back: inner tab → Dashboard; Dashboard → confirm-exit (never a blank pop).
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var lastBackPress by androidx.compose.runtime.remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    androidx.activity.compose.BackHandler {
+        when {
+            tab != 0 -> tab = 0
+            System.currentTimeMillis() - lastBackPress < 2_000 ->
+                (context as? android.app.Activity)?.finish()
+            else -> {
+                lastBackPress = System.currentTimeMillis()
+                android.widget.Toast
+                    .makeText(context, "Press back again to exit", android.widget.Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
+    }
 
     val items = listOf(
         PillNavItem("Dashboard", Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),

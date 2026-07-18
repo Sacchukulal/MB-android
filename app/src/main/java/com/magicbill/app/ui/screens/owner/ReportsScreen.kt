@@ -99,7 +99,7 @@ fun ReportsScreen(
     onOpenBill: (String) -> Unit,
     viewModel: ReportsViewModel = hiltViewModel(),
 ) {
-    val licenseKey = owner.active?.licenseKey ?: return
+    val licenseKey = owner.active.licenseKey
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val restaurantName = owner.active.name

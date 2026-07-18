@@ -1,6 +1,8 @@
 package com.magicbill.app.data.remote
 
 import com.magicbill.app.BuildConfig
+import com.magicbill.app.core.FriendlyException
+import com.magicbill.app.core.MBErrors
 import com.magicbill.app.core.PermissionMap
 import com.magicbill.app.core.StaffIdentity
 import com.magicbill.app.core.StaffRestaurant
@@ -47,8 +49,15 @@ class EdgeFunctions @Inject constructor(
                 .addHeader("Authorization", "Bearer ${token ?: BuildConfig.SUPABASE_ANON_KEY}")
                 .build()
             client.newCall(request).execute().use { res ->
-                val text = res.body?.string() ?: throw EdgeException("empty-response")
-                json.parseToJsonElement(text).jsonObject
+                val text = res.body?.string().orEmpty()
+                // Edge functions always answer JSON (even errors carry ok:false).
+                // Anything else is a gateway/server failure, not a JSON bug.
+                val parsed = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+                if (parsed == null) {
+                    android.util.Log.w("MB/Net", "[NET] $name returned non-JSON (HTTP ${res.code})")
+                    throw FriendlyException(MBErrors.SERVER_DOWN)
+                }
+                parsed
             }
         }
 

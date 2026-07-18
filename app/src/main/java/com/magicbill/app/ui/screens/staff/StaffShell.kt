@@ -114,6 +114,23 @@ private fun StaffTabs(
     var tabIndex by rememberSaveable(tabs.size) { mutableIntStateOf(0) }
     val currentKey = tabs.getOrNull(tabIndex)?.key ?: "profile"
 
+    // Back: inner tab → first tab; first tab → confirm-exit.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var lastBackPress by androidx.compose.runtime.remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    androidx.activity.compose.BackHandler {
+        when {
+            tabIndex != 0 -> tabIndex = 0
+            System.currentTimeMillis() - lastBackPress < 2_000 ->
+                (context as? android.app.Activity)?.finish()
+            else -> {
+                lastBackPress = System.currentTimeMillis()
+                android.widget.Toast
+                    .makeText(context, "Press back again to exit", android.widget.Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         AnimatedContent(
             targetState = currentKey,

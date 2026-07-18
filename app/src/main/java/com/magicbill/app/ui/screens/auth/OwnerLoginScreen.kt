@@ -49,6 +49,7 @@ fun OwnerLoginScreen(
     val state by viewModel.owner.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val toolbarColor = MaterialTheme.colorScheme.surfaceContainer.toArgb()
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -72,10 +73,11 @@ fun OwnerLoginScreen(
 
             MBTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = { email = it; viewModel.clearOwnerErrors() },
                 label = "Email",
                 placeholder = "you@restaurant.in",
                 leadingIcon = Icons.Outlined.Email,
+                errorText = state.emailError,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Email,
                     imeAction = ImeAction.Next,
@@ -87,17 +89,20 @@ fun OwnerLoginScreen(
 
             MBTextField(
                 value = password,
-                onValueChange = { password = it },
+                onValueChange = { password = it; viewModel.clearOwnerErrors() },
                 label = "Password",
                 isPassword = true,
                 leadingIcon = Icons.Outlined.Lock,
                 errorText = state.error,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Go,
+                    imeAction = ImeAction.Done,
                 ),
                 keyboardActions = KeyboardActions(
-                    onGo = { viewModel.ownerLogin(email, password) },
+                    onDone = {
+                        keyboard?.hide()
+                        viewModel.ownerLogin(email, password)
+                    },
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -118,7 +123,10 @@ fun OwnerLoginScreen(
 
             MBButton(
                 "Sign in",
-                onClick = { viewModel.ownerLogin(email, password) },
+                onClick = {
+                    keyboard?.hide()
+                    viewModel.ownerLogin(email, password)
+                },
                 loading = state.loading,
                 modifier = Modifier.fillMaxWidth(),
             )
