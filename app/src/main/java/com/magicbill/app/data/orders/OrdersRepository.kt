@@ -79,6 +79,9 @@ class OrdersRepository @Inject constructor(
     /** Server's pos_last_seen_at freshness flag from the last reply. */
     private var serverPosOnline = false
 
+    /** When that flag was last refreshed — it is only trusted while recent. */
+    private var serverPosOnlineAt = 0L
+
     // ---------------- caller identity ----------------
 
     private data class Caller(
@@ -164,6 +167,7 @@ class OrdersRepository @Inject constructor(
 
         reply.posOnline?.let {
             serverPosOnline = it
+            serverPosOnlineAt = System.currentTimeMillis()
             _state.value = _state.value.copy(posOnline = effectivePosOnline())
         }
         return reply
@@ -344,11 +348,33 @@ class OrdersRepository @Inject constructor(
 
     /** Presence verdict from OrdersRealtime (null when the socket is down). */
     fun setPresencePosOnline(online: Boolean?) {
+        val was = presencePosOnline
         presencePosOnline = online
         _state.value = _state.value.copy(posOnline = effectivePosOnline())
+        // Presence just said the counter left the room. That may only mean the
+        // counter's socket dropped while its heartbeat is still running, so ask
+        // the server rather than sitting on a possibly stale flag — this is
+        // what makes the tab flip within ~5s when the counter really goes down.
+        if (online != true && was != online) {
+            scope.launch { runCatching { refreshOrders() }.onFailure { logFailure("presence-recheck", it) } }
+        }
     }
 
-    private fun effectivePosOnline(): Boolean = presencePosOnline ?: serverPosOnline
+    /**
+     * Is the counter up? The server's flag is the FLOOR, never the ceiling:
+     * `mobile-orders` accepts or rejects an event purely on its own
+     * `pos_last_seen_at` window, so refusing to let a waiter order while the
+     * server would have taken it happily is always wrong. Presence is only
+     * ever allowed to say "yes" faster, never to veto a fresh server "yes".
+     *
+     * The server flag is trusted only while recent, so a counter that dies
+     * without a presence event still drops out within one poll cycle.
+     */
+    private fun effectivePosOnline(): Boolean {
+        if (presencePosOnline == true) return true
+        val fresh = System.currentTimeMillis() - serverPosOnlineAt < SERVER_FLAG_TTL_MS
+        return serverPosOnline && fresh
+    }
 
     /**
      * Single-order lookup by cloud id — used by the detail screen to learn
@@ -632,6 +658,13 @@ class OrdersRepository @Inject constructor(
     companion object {
         private const val TAG = "MB/Orders"
         private const val EVENT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
+
+        /**
+         * How long the server's posOnline flag stays trustworthy. The degraded
+         * poll runs every 5s and the server's own window is 75s, so 20s keeps
+         * the tab honest without flickering between refreshes.
+         */
+        private const val SERVER_FLAG_TTL_MS = 20_000L
 
         /** Friendly copy for every machine reason in the contract. */
         fun reasonCopy(reason: String?): String = when (reason) {

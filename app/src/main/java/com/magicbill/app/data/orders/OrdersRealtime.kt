@@ -87,30 +87,42 @@ class OrdersRealtime @Inject constructor(
         Log.i(TAG, "[RT] start")
         runJob?.cancel()
         runJob = scope.launch {
-            // Re-join whenever the room or connectivity changes.
-            combine(repo.roomId, network.online) { room, online ->
-                if (online) room else null
-            }.collectLatest { room ->
-                if (room == null) {
-                    markDown()
-                    return@collectLatest
-                }
-                var backoff = 1_000L
-                while (isActive) {
-                    try {
-                        runChannel(room) // returns only by throwing/cancel
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.w(TAG, "[RT] channel failed: ${e::class.simpleName}: ${e.message}")
+            try {
+                // Re-join whenever the room or connectivity changes.
+                combine(repo.roomId, network.online) { room, online ->
+                    if (online) room else null
+                }.collectLatest { room ->
+                    if (room == null) {
+                        markDown()
+                        return@collectLatest
                     }
-                    markDown()
-                    delay(backoff)
-                    backoff = (backoff * 2).coerceAtMost(30_000L)
+                    var backoff = 1_000L
+                    while (isActive) {
+                        try {
+                            runChannel(room) // returns only by throwing/cancel
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[RT] channel failed: ${e::class.simpleName}: ${e.message}")
+                        }
+                        markDown()
+                        delay(backoff)
+                        backoff = (backoff * 2).coerceAtMost(30_000L)
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Anything outside the per-attempt retry (the room/network flow
+                // itself). The Orders tab must NOT go dead: pollJob below is a
+                // separate job and keeps refreshing every 5s regardless.
+                Log.e(TAG, "[RT] realtime supervisor died — staying on 5s backup polling", e)
+                markDown()
             }
         }
         // Degraded safety net, foreground only (this job dies with stop()).
+        // Deliberately independent of runJob: no realtime failure may ever
+        // leave this tab without a refresh path.
         pollJob?.cancel()
         pollJob = scope.launch {
             while (isActive) {
@@ -119,7 +131,7 @@ class OrdersRealtime @Inject constructor(
                     runCatching {
                         repo.refreshOrders()
                         repo.resolveOpenEvents()
-                    }
+                    }.onFailure { Log.w(TAG, "[RT] degraded poll failed: ${it.message}") }
                 }
             }
         }
