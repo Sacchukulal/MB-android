@@ -1,18 +1,25 @@
 package com.magicbill.app.ui.screens.orders
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,14 +42,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -67,7 +81,14 @@ import com.magicbill.app.ui.components.MBTextField
 import com.magicbill.app.ui.components.SectionHeader
 import com.magicbill.app.ui.components.SegmentedChips
 import com.magicbill.app.ui.components.SkeletonScreen
+import com.magicbill.app.ui.theme.MBMotion
 import java.time.Instant
+
+/**
+ * The signed-in waiter's name, so a tile can mark the tables this person
+ * opened. Empty for the owner, who does not take orders as a waiter.
+ */
+internal val LocalWaiterName = compositionLocalOf { "" }
 
 /**
  * The Orders tab: live table grid + open orders, shared by owner and staff.
@@ -83,6 +104,7 @@ fun OrdersScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val online by viewModel.online.collectAsStateWithLifecycle()
+    val waiterName by viewModel.waiterName.collectAsStateWithLifecycle()
 
     // Socket + refresh live only while an orders surface is on screen.
     LifecycleResumeEffect(Unit) {
@@ -131,13 +153,17 @@ fun OrdersScreen(
                         MBErrorState(state.error!!, onRetry = { viewModel.load(force = true) })
                     }
 
-                    state.data != null -> OrdersContent(
-                        data = state.data!!,
-                        onOpenOrder = onOpenOrder,
-                        onNewOrder = onNewOrder,
-                        onPickAmong = { tablePickSheet = it },
-                        onNewTableManual = { newTableSheet = true },
-                    )
+                    state.data != null -> CompositionLocalProvider(
+                        LocalWaiterName provides waiterName,
+                    ) {
+                        OrdersContent(
+                            data = state.data!!,
+                            onOpenOrder = onOpenOrder,
+                            onNewOrder = onNewOrder,
+                            onPickAmong = { tablePickSheet = it },
+                            onNewTableManual = { newTableSheet = true },
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(120.dp))
@@ -201,6 +227,7 @@ private fun OrdersContent(
 ) {
     val openOrders = data.orders.filter { it.isOpen }
     val activeTables = data.tables.filter { it.isActive }
+    val myName = LocalWaiterName.current
 
     // Orders attach to a master table by its COMPOSED name ("AC 1") or that
     // name plus a sub-table letter ("AC 1B") — same semantics as the POS.
@@ -237,14 +264,26 @@ private fun OrdersContent(
     }
 
     if (activeTables.isNotEmpty()) {
-        SectionHeader("Tables")
-        TableGrid(
-            tables = visibleTables,
-            byTable = byTable,
-            onOpenOrder = onOpenOrder,
-            onNewOrder = onNewOrder,
-            onPickAmong = onPickAmong,
-        )
+        // Grouped by section, never one flat wall of numbers: four tiles
+        // labelled "1" are indistinguishable without their section.
+        val groups = remember(visibleTables) { groupTables(visibleTables) }
+        groups.forEach { group ->
+            SectionHeader(
+                when {
+                    group.section.isNotEmpty() -> group.section
+                    groups.size == 1 -> "Tables"
+                    else -> "No section"
+                }
+            )
+            TableGrid(
+                tables = group.tables,
+                byTable = byTable,
+                myName = myName,
+                onOpenOrder = onOpenOrder,
+                onNewOrder = onNewOrder,
+                onPickAmong = onPickAmong,
+            )
+        }
     } else {
         SectionHeader("Table orders")
         if (tableOrders.isEmpty()) {
@@ -263,7 +302,9 @@ private fun OrdersContent(
     }
 
     if (activeTables.isNotEmpty() && otherOrders.isNotEmpty()) {
-        SectionHeader("Other tables")
+        // Orders opened at the counter on a table that is not in the master —
+        // including everything opened before tables carried their section.
+        SectionHeader("Orders on other tables")
         otherOrders.forEach { order -> OrderRow(order, onOpenOrder) }
     }
 
@@ -285,10 +326,32 @@ private fun OrdersContent(
     }
 }
 
+/** One section's tables, in a stable order that does not depend on the server. */
+internal data class TableGroup(val section: String, val tables: List<TableInfo>)
+
+/**
+ * Sections ordered by the owner's own sort_order (lowest first), ties broken
+ * alphabetically, with the unsectioned tables last. Deliberately independent
+ * of the order the Edge Function happens to return.
+ */
+internal fun groupTables(tables: List<TableInfo>): List<TableGroup> =
+    tables.groupBy { it.section }
+        .map { (section, rows) ->
+            TableGroup(section, rows.sortedWith(compareBy({ it.sortOrder }, { it.localId })))
+        }
+        .sortedWith(
+            compareBy(
+                { it.section.isEmpty() }, // unsectioned tables go last
+                { it.tables.minOfOrNull { t -> t.sortOrder } ?: 0L },
+                { it.section.lowercase() },
+            ),
+        )
+
 @Composable
 private fun TableGrid(
     tables: List<TableInfo>,
     byTable: Map<String, List<LiveOrder>>,
+    myName: String,
     onOpenOrder: (String) -> Unit,
     onNewOrder: (String, String, String) -> Unit,
     onPickAmong: (List<LiveOrder>) -> Unit,
@@ -304,6 +367,9 @@ private fun TableGrid(
                 TableTile(
                     table = table,
                     orders = orders,
+                    mine = myName.isNotEmpty() && orders.any {
+                        it.createdByKind == "staff" && it.createdByName.equals(myName, ignoreCase = true)
+                    },
                     modifier = Modifier.weight(1f),
                     onClick = {
                         when {
@@ -322,64 +388,180 @@ private fun TableGrid(
     }
 }
 
+/** Uniform so the grid reads as a floor plan rather than a ragged list. */
+private val TILE_HEIGHT = 104.dp
+
+/**
+ * One table, meant to be read at arm's length in a noisy room:
+ *  - a real edge (border + its own container colour), so it is an object;
+ *  - free vs occupied carried by SHAPE as well as colour — occupied tiles get
+ *    a filled side stripe and a solid dot, free tiles a hollow ring and no
+ *    stripe — so it survives colour blindness and glare;
+ *  - the section printed on the tile itself, because "1" alone is ambiguous
+ *    when AC, NORMAL and SELF TABLE all have one.
+ */
 @Composable
 private fun TableTile(
     table: TableInfo,
     orders: List<LiveOrder>,
+    mine: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     val occupied = orders.isNotEmpty()
-    val bg = if (occupied) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-    } else {
-        MaterialTheme.colorScheme.surfaceContainer
+    val accent = when {
+        !occupied -> scheme.outline
+        mine -> scheme.tertiary
+        else -> scheme.primary
     }
-    Column(
+    val container = if (occupied) scheme.surfaceContainerHigh else scheme.surfaceContainer
+    val edge = if (occupied) accent else scheme.outlineVariant
+
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = MBMotion.bouncy(),
+        label = "tableTilePress",
+    )
+
+    val total = if (occupied) orders.sumOf { it.total } else 0.0
+    val count = if (occupied) orders.sumOf { it.itemCount } else 0
+    val elapsed = if (occupied) elapsedText(orders.minOf { it.createdAt }) else ""
+    val spoken = tileDescription(table, orders, mine, total, count, elapsed)
+
+    Box(
         modifier
-            .clickable(onClick = onClick)
-            .background(bg, RoundedCornerShape(16.dp))
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .height(TILE_HEIGHT)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(16.dp))
+            .background(container)
+            .border(if (occupied) 1.5.dp else 1.dp, edge, RoundedCornerShape(16.dp))
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
+            .semantics(mergeDescendants = true) { contentDescription = spoken },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Shape, not just colour: an occupied table carries a filled edge.
+        if (occupied) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(5.dp)
+                    .background(accent),
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(start = if (occupied) 15.dp else 12.dp, end = 12.dp)
+                .padding(vertical = 10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    table.section.ifEmpty { "TABLE" }.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (orders.size > 1) {
+                    Text(
+                        "×${orders.size}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = accent,
+                    )
+                    Spacer(Modifier.width(5.dp))
+                }
+                StatusMark(occupied = occupied, color = accent)
+            }
             Text(
                 table.label,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = if (occupied) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                // Free tiles are fully legible on purpose: they must read as
+                // tappable, never as disabled.
+                color = scheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (orders.size > 1) {
-                Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
+            if (occupied) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        formatINR(total, decimals = 0),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    // A word, not a colour, marks this waiter's own table.
+                    if (mine) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "You",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = accent,
+                        )
+                    }
+                }
                 Text(
-                    "×${orders.size}",
+                    listOfNotNull("$count items", elapsed.ifEmpty { null }).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(
+                    "Free · tap to order",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        Spacer(Modifier.height(4.dp))
-        if (occupied) {
-            val total = orders.sumOf { it.total }
-            val count = orders.sumOf { it.itemCount }
-            Text(
-                formatINR(total, decimals = 0),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                "$count items · ${elapsedText(orders.minOf { it.createdAt })}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Text(
-                "Free",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(14.dp))
-        }
     }
+}
+
+/** Solid dot = occupied, hollow ring = free. Readable without colour. */
+@Composable
+private fun StatusMark(occupied: Boolean, color: androidx.compose.ui.graphics.Color) {
+    if (occupied) {
+        Box(Modifier.size(9.dp).background(color, CircleShape))
+    } else {
+        Box(Modifier.size(9.dp).border(1.5.dp, color, CircleShape))
+    }
+}
+
+/** "AC table 1, occupied, 693 rupees, 3 items, 19 min" — one per tile. */
+private fun tileDescription(
+    table: TableInfo,
+    orders: List<LiveOrder>,
+    mine: Boolean,
+    total: Double,
+    count: Int,
+    elapsed: String,
+): String = buildString {
+    append(
+        if (table.section.isNotEmpty()) "${table.section} table ${table.label}"
+        else "Table ${table.label}",
+    )
+    if (orders.isEmpty()) {
+        append(", free, tap to start an order")
+        return@buildString
+    }
+    append(", occupied")
+    if (mine) append(", your order")
+    append(", ${total.toLong()} rupees")
+    append(", $count items")
+    if (elapsed.isNotEmpty()) append(", $elapsed")
+    if (orders.size > 1) append(", ${orders.size} separate orders")
 }
 
 @Composable
