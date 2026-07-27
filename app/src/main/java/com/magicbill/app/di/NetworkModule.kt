@@ -13,6 +13,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.realtime.Realtime
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -54,5 +55,8 @@ object NetworkModule {
             }
             install(Postgrest)
             install(Functions)
+            // Live mobile ordering: doorbell + presence only — no Postgres
+            // change subscriptions, no order data on the wire.
+            install(Realtime)
         }
 }

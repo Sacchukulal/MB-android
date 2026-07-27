@@ -31,12 +31,16 @@ import com.magicbill.app.core.AllPermissions
 import com.magicbill.app.core.LocalPermissions
 import com.magicbill.app.data.MBSession
 import com.magicbill.app.navigation.BillDetailRoute
+import com.magicbill.app.navigation.OrderBuilderRoute
+import com.magicbill.app.navigation.OrderDetailRoute
 import com.magicbill.app.navigation.OwnerTabsRoute
 import com.magicbill.app.ui.RootViewModel
 import com.magicbill.app.ui.components.PillNavBar
 import com.magicbill.app.ui.components.PillNavItem
 import com.magicbill.app.ui.screens.bills.BillDetailScreen
-import com.magicbill.app.ui.screens.staff.StaffOrdersScreen
+import com.magicbill.app.ui.screens.orders.OrderBuilderScreen
+import com.magicbill.app.ui.screens.orders.OrderDetailScreen
+import com.magicbill.app.ui.screens.orders.OrdersScreen
 import com.magicbill.app.ui.theme.MBMotion
 import androidx.compose.runtime.CompositionLocalProvider
 
@@ -64,6 +68,12 @@ fun OwnerShell(rootViewModel: RootViewModel) {
                     rootViewModel = rootViewModel,
                     owner = owner,
                     onOpenBill = { billId -> navController.navigate(BillDetailRoute(billId)) },
+                    onOpenOrder = { uuid -> navController.navigate(OrderDetailRoute(uuid)) },
+                    onNewOrder = { type, table, section ->
+                        navController.navigate(
+                            OrderBuilderRoute(orderType = type, tableNumber = table, section = section),
+                        )
+                    },
                 )
             }
             composable<BillDetailRoute> { entry ->
@@ -75,6 +85,24 @@ fun OwnerShell(rootViewModel: RootViewModel) {
                     restaurantName = owner.active.name,
                 )
             }
+            composable<OrderDetailRoute> { entry ->
+                val route = entry.toRoute<OrderDetailRoute>()
+                OrderDetailScreen(
+                    clientUuid = route.clientUuid,
+                    onAddItems = { uuid -> navController.navigate(OrderBuilderRoute(orderClientUuid = uuid)) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable<OrderBuilderRoute> { entry ->
+                val route = entry.toRoute<OrderBuilderRoute>()
+                OrderBuilderScreen(
+                    orderClientUuid = route.orderClientUuid,
+                    orderType = route.orderType,
+                    tableNumber = route.tableNumber,
+                    section = route.section,
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
     }
 }
@@ -84,6 +112,8 @@ private fun OwnerTabs(
     rootViewModel: RootViewModel,
     owner: MBSession.Owner,
     onOpenBill: (String) -> Unit,
+    onOpenOrder: (String) -> Unit,
+    onNewOrder: (orderType: String, tableNumber: String, section: String) -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -125,7 +155,11 @@ private fun OwnerTabs(
                 0 -> DashboardScreen(rootViewModel, owner, onOpenBill)
                 1 -> ReportsScreen(rootViewModel, owner, onOpenBill)
                 2 -> StaffScreen(owner)
-                3 -> StaffOrdersScreen()
+                3 -> OrdersScreen(
+                    restaurantName = owner.active.name,
+                    onOpenOrder = onOpenOrder,
+                    onNewOrder = onNewOrder,
+                )
                 else -> AccountScreen(rootViewModel, owner)
             }
         }

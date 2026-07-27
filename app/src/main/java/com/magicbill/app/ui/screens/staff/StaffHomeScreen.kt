@@ -225,7 +225,7 @@ fun NoAccessScreen(session: MBSession.Staff) {
             Spacer(Modifier.height(10.dp))
             Text(
                 "You're all set, ${session.staff.name.substringBefore(' ')}! Your manager " +
-                    "will enable features for you.\n\nMobile ordering is coming soon!",
+                    "will enable features for you.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

@@ -51,8 +51,21 @@ class SecurePrefs @Inject constructor(
         remove(SELECTED_LICENSE)
     }
 
+    /**
+     * Stable random id for this install — the identity `mobile_installs` and
+     * the POS's device limit count against. Survives logins/logouts; only a
+     * reinstall (or cleared app data) mints a new one.
+     */
+    fun installId(): String {
+        getString(INSTALL_ID)?.let { return it }
+        val fresh = java.util.UUID.randomUUID().toString()
+        putString(INSTALL_ID, fresh)
+        return fresh
+    }
+
     companion object Keys {
         const val OWNER_SESSION = "owner_session"
+        const val INSTALL_ID = "orders_install_id"
         const val STAFF_SESSION = "staff_session"
         const val SELECTED_LICENSE = "selected_license"
         const val REMEMBERED_STAFF_CODE = "remembered_staff_code"

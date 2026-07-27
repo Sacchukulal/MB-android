@@ -14,6 +14,8 @@ enum class PermissionKey(val key: String) {
     ViewPlanStatus("view_plan_status"),
     ManageStaff("manage_staff"),
     TakeOrders("take_orders"),
+    VoidOrderItems("void_order_items"),
+    FinalizeBill("finalize_bill"),
     ViewRevenueTotals("view_revenue_totals"),
     ExportReports("export_reports"),
 }
@@ -63,8 +65,16 @@ val PERMISSION_METAS: List<PermissionMeta> = listOf(
     ),
     PermissionMeta(
         PermissionKey.TakeOrders, "Take orders",
-        "Take customer orders from this app",
-        comingSoon = true,
+        "Open a table, add items, and send orders to the billing counter",
+    ),
+    PermissionMeta(
+        PermissionKey.VoidOrderItems, "Cancel or remove items",
+        "Remove items after the kitchen ticket has printed. Prints a " +
+            "cancellation slip and records who did it (trusted staff)",
+    ),
+    PermissionMeta(
+        PermissionKey.FinalizeBill, "Settle bills",
+        "Choose the payment mode and print the final bill at the counter",
     ),
     PermissionMeta(
         PermissionKey.ViewRevenueTotals, "See revenue amounts",
@@ -84,6 +94,11 @@ val PERMISSION_PRESETS: List<Pair<String, Map<String, Boolean>>> = listOf(
         PermissionKey.ViewReports.key to true,
         PermissionKey.ViewBills.key to true,
         PermissionKey.ViewRevenueTotals.key to true,
+    ),
+    "Waiter" to mapOf(PermissionKey.TakeOrders.key to true),
+    "Captain" to mapOf(
+        PermissionKey.TakeOrders.key to true,
+        PermissionKey.FinalizeBill.key to true,
     ),
     "Minimal" to mapOf(PermissionKey.ViewDashboard.key to true),
 )

@@ -33,11 +33,16 @@ import com.magicbill.app.core.PermissionKey
 import com.magicbill.app.core.has
 import com.magicbill.app.data.MBSession
 import com.magicbill.app.navigation.BillDetailRoute
+import com.magicbill.app.navigation.OrderBuilderRoute
+import com.magicbill.app.navigation.OrderDetailRoute
 import com.magicbill.app.navigation.StaffTabsRoute
 import com.magicbill.app.ui.RootViewModel
 import com.magicbill.app.ui.components.PillNavBar
 import com.magicbill.app.ui.components.PillNavItem
 import com.magicbill.app.ui.screens.bills.BillDetailScreen
+import com.magicbill.app.ui.screens.orders.OrderBuilderScreen
+import com.magicbill.app.ui.screens.orders.OrderDetailScreen
+import com.magicbill.app.ui.screens.orders.OrdersScreen
 import com.magicbill.app.ui.screens.owner.StaffManagerScreen
 import com.magicbill.app.ui.theme.MBMotion
 
@@ -67,6 +72,12 @@ fun StaffShell(rootViewModel: RootViewModel) {
                     rootViewModel = rootViewModel,
                     staffSession = staff,
                     onOpenBill = { billId -> navController.navigate(BillDetailRoute(billId)) },
+                    onOpenOrder = { uuid -> navController.navigate(OrderDetailRoute(uuid)) },
+                    onNewOrder = { type, table, section ->
+                        navController.navigate(
+                            OrderBuilderRoute(orderType = type, tableNumber = table, section = section),
+                        )
+                    },
                 )
             }
             composable<BillDetailRoute> { entry ->
@@ -76,6 +87,24 @@ fun StaffShell(rootViewModel: RootViewModel) {
                     isStaff = true,
                     onBack = { navController.popBackStack() },
                     restaurantName = staff.restaurant.name,
+                )
+            }
+            composable<OrderDetailRoute> { entry ->
+                val route = entry.toRoute<OrderDetailRoute>()
+                OrderDetailScreen(
+                    clientUuid = route.clientUuid,
+                    onAddItems = { uuid -> navController.navigate(OrderBuilderRoute(orderClientUuid = uuid)) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable<OrderBuilderRoute> { entry ->
+                val route = entry.toRoute<OrderBuilderRoute>()
+                OrderBuilderScreen(
+                    orderClientUuid = route.orderClientUuid,
+                    orderType = route.orderType,
+                    tableNumber = route.tableNumber,
+                    section = route.section,
+                    onBack = { navController.popBackStack() },
                 )
             }
         }
@@ -89,6 +118,8 @@ private fun StaffTabs(
     rootViewModel: RootViewModel,
     staffSession: MBSession.Staff,
     onOpenBill: (String) -> Unit,
+    onOpenOrder: (String) -> Unit,
+    onNewOrder: (orderType: String, tableNumber: String, section: String) -> Unit,
 ) {
     val perms = staffSession.staff.permissions
     val hasAnyView = perms.has(PermissionKey.ViewDashboard) ||
@@ -141,7 +172,11 @@ private fun StaffTabs(
                 "home" -> StaffHomeScreen(staffSession, onOpenBill)
                 "reports" -> StaffReportsScreen(staffSession, onOpenBill)
                 "staff" -> StaffManagerScreen()
-                "orders" -> StaffOrdersScreen()
+                "orders" -> OrdersScreen(
+                    restaurantName = staffSession.restaurant.name,
+                    onOpenOrder = onOpenOrder,
+                    onNewOrder = onNewOrder,
+                )
                 else -> StaffProfileScreen(rootViewModel, staffSession)
             }
         }

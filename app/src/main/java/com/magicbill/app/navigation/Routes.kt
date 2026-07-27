@@ -24,3 +24,19 @@ data object StaffTabsRoute
 /** Full-screen receipt view, pushed over either shell. */
 @Serializable
 data class BillDetailRoute(val billId: String)
+
+/**
+ * Order builder: new order when [orderClientUuid] is null (using the given
+ * type/table/section), otherwise "add items" to that open order.
+ */
+@Serializable
+data class OrderBuilderRoute(
+    val orderClientUuid: String? = null,
+    val orderType: String = "Table",
+    val tableNumber: String = "",
+    val section: String = "",
+)
+
+/** Live order detail, pushed over either shell. */
+@Serializable
+data class OrderDetailRoute(val clientUuid: String)

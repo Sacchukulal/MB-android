@@ -12,6 +12,7 @@ data class Cached<T>(val data: T, val updatedAt: Long)
 class CacheStore @Inject constructor(
     private val dao: KvCacheDao,
     private val ownerLocal: OwnerLocalDao,
+    private val ordersLocal: OrdersLocalDao,
     private val json: Json,
 ) {
     suspend fun <T> read(key: String, serializer: KSerializer<T>): Cached<T>? {
@@ -25,13 +26,14 @@ class CacheStore @Inject constructor(
         dao.put(KvEntry(key, json.encodeToString(serializer, value), System.currentTimeMillis()))
     }
 
-    /** Logout wipe: kv cache AND the owner's local SQLite mirror. */
+    /** Logout wipe: kv cache, the owner's local SQLite mirror, and orders. */
     suspend fun clearAll() {
         dao.clearAll()
         ownerLocal.clearBills()
         ownerLocal.clearSummaries()
         ownerLocal.clearExpenses()
         ownerLocal.clearSyncState()
+        ordersLocal.wipeAll()
     }
 }
 

@@ -29,3 +29,5 @@ build-log.txt
 # Misc
 .DS_Store
 *.log
+run-release-check.cmd
+release-log.txt
