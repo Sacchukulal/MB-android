@@ -47,7 +47,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.magicbill.app.core.composeTableName
 import com.magicbill.app.core.formatINR
+import com.magicbill.app.core.tableNumberBelongsTo
 import com.magicbill.app.data.orders.LiveOrder
 import com.magicbill.app.data.orders.OrdersData
 import com.magicbill.app.data.orders.OrdersGate
@@ -200,18 +202,15 @@ private fun OrdersContent(
     val openOrders = data.orders.filter { it.isOpen }
     val activeTables = data.tables.filter { it.isActive }
 
-    // Orders attach to a master table by exact label or sub-table letter
-    // ("6B" belongs to tile "6" — same semantics as the POS popup).
+    // Orders attach to a master table by its COMPOSED name ("AC 1") or that
+    // name plus a sub-table letter ("AC 1B") — same semantics as the POS.
+    // Matching on the bare label instead is what made one order light up every
+    // tile numbered "1" across AC, NORMAL and SELF TABLE.
     val tableOrders = openOrders.filter { it.orderType == "Table" }
     val byTable = remember(openOrders, activeTables) {
-        val labels = activeTables.map { it.label }.toSet()
+        val names = activeTables.map { composeTableName(it.section, it.label) }
         tableOrders.groupBy { order ->
-            when {
-                order.tableNumber in labels -> order.tableNumber
-                order.tableNumber.length > 1 && order.tableNumber.dropLast(1) in labels &&
-                    order.tableNumber.last() in 'B'..'H' -> order.tableNumber.dropLast(1)
-                else -> "" // "Other" group
-            }
+            names.firstOrNull { tableNumberBelongsTo(order.tableNumber, it) } ?: "" // "" = "Other"
         }
     }
     val otherOrders = byTable[""].orEmpty()
@@ -300,14 +299,17 @@ private fun TableGrid(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             rowTables.forEach { table ->
-                val orders = byTable[table.label].orEmpty()
+                val name = composeTableName(table.section, table.label)
+                val orders = byTable[name].orEmpty()
                 TableTile(
                     table = table,
                     orders = orders,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         when {
-                            orders.isEmpty() -> onNewOrder("Table", table.label, table.section)
+                            // The composed name is what the counter stores and
+                            // what the kitchen slip prints.
+                            orders.isEmpty() -> onNewOrder("Table", name, table.section)
                             orders.size == 1 -> onOpenOrder(orders.first().clientUuid)
                             else -> onPickAmong(orders)
                         }
