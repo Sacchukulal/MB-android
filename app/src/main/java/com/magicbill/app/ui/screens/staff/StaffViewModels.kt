@@ -70,10 +70,19 @@ class StaffReportsViewModel @Inject constructor(
 class StaffAccountViewModel @Inject constructor(
     private val query: CachedQuery,
     private val repo: StaffDataRepository,
+    private val orders: com.magicbill.app.data.orders.OrdersCloud,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CachedUi<StaffPlanInfo>())
     val state: StateFlow<CachedUi<StaffPlanInfo>> = _state.asStateFlow()
+
+    /**
+     * 5.4 — the owner-facing readout of how often this phone has had to call
+     * Magic Bill's metered endpoint. Read straight from the rolling log that
+     * enforces the ceiling, so the number on screen IS the number being
+     * enforced.
+     */
+    fun usage() = orders.usage()
 
     private var loaded = false
 

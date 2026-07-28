@@ -1,8 +1,6 @@
 package com.magicbill.app.data.orders
 
-import android.os.Build
 import android.util.Log
-import com.magicbill.app.core.FriendlyException
 import com.magicbill.app.core.MBErrors
 import com.magicbill.app.core.PermissionMap
 import com.magicbill.app.data.AuthRepository
@@ -16,8 +14,9 @@ import com.magicbill.app.data.local.OrdersLocalDao
 import com.magicbill.app.data.local.OrdersSyncStateEntity
 import com.magicbill.app.data.local.PendingEventEntity
 import com.magicbill.app.data.local.RestaurantTableEntity
-import com.magicbill.app.data.prefs.SecurePrefs
-import com.magicbill.app.data.remote.EdgeFunctions
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,29 +29,40 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonObjectBuilder
-import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The phone side of live mobile ordering. Cache-first: Room renders
- * instantly, the `mobile-orders` Edge Function tops it up, and the realtime
- * doorbell (OrdersRealtime) triggers refreshes. The phone only ever submits
- * INTENTS — the POS is the authority for all order state.
+ * The phone side of live mobile ordering.
+ *
+ * WHAT CHANGED IN THE REBUILD:
+ *  - Nothing asks "anything new?" on a timer. The phone fetches only when
+ *    the Orders tab opens, the user pulls to refresh, or a bell says
+ *    something actually changed.
+ *  - THE BELL CARRIES THE PAYLOAD. A changed order arrives complete and is
+ *    written straight into Room. Six phones cost ONE realtime message, not
+ *    six Edge Function invocations.
+ *  - Reads go straight to PostgREST under Row Level Security, which is not
+ *    metered. The only Edge Function in the path is enrolment, once.
+ *
+ * Cache-first is unchanged: Room renders instantly and is never blocked
+ * behind a spinner.
  */
 @Singleton
 class OrdersRepository @Inject constructor(
     private val auth: AuthRepository,
-    private val edge: EdgeFunctions,
+    private val cloud: OrdersCloud,
+    private val supabase: SupabaseClient,
     private val dao: OrdersLocalDao,
-    private val prefs: SecurePrefs,
     private val json: Json,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,11 +71,11 @@ class OrdersRepository @Inject constructor(
     private val _state = MutableStateFlow(OrdersUiState())
     val state: StateFlow<OrdersUiState> = _state.asStateFlow()
 
-    /** Caller's current permission map — every server reply refreshes it. */
+    /** Caller's current permission map — every tenant_info read refreshes it. */
     private val _permissions = MutableStateFlow<PermissionMap>(emptyMap())
     val permissions: StateFlow<PermissionMap> = _permissions.asStateFlow()
 
-    /** Realtime room id for OrdersRealtime. Opaque capability — never log. */
+    /** Realtime room id. Opaque capability — never log it. */
     private val _roomId = MutableStateFlow<String?>(null)
     val roomId: StateFlow<String?> = _roomId.asStateFlow()
 
@@ -76,101 +86,89 @@ class OrdersRepository @Inject constructor(
     /** Presence verdict from the realtime channel; null = no verdict yet. */
     private var presencePosOnline: Boolean? = null
 
-    /** Server's pos_last_seen_at freshness flag from the last reply. */
+    /** licenses.pos_last_seen_at freshness from the last tenant_info read. */
     private var serverPosOnline = false
-
-    /** When that flag was last refreshed — it is only trusted while recent. */
     private var serverPosOnlineAt = 0L
 
     // ---------------- caller identity ----------------
 
-    private data class Caller(
-        val scopeKey: String,
-        val staffToken: String?,
-        val ownerJwt: String?,
-        val licenseKey: String?,
-        val restaurantName: String,
-    )
+    private data class Caller(val scopeKey: String, val restaurantName: String)
 
     private suspend fun caller(): Caller? = when (val s = auth.session.value) {
         is MBSession.Staff -> auth.loadStaffSession()?.let {
-            Caller(
-                scopeKey = "staff:${it.restaurant.code}",
-                staffToken = it.token,
-                ownerJwt = null,
-                licenseKey = null,
-                restaurantName = it.restaurant.name,
-            )
+            Caller("staff:${it.restaurant.code}", it.restaurant.name)
         }
-        is MBSession.Owner -> auth.ownerAccessToken()?.let { jwt ->
-            Caller(
-                scopeKey = s.active.licenseKey,
-                staffToken = null,
-                ownerJwt = jwt,
-                licenseKey = s.active.licenseKey,
-                restaurantName = s.active.name,
-            )
-        }
+        is MBSession.Owner -> Caller("owner:${s.active.licenseKey}", s.active.name)
         else -> null
     }
 
     // ---------------- transport ----------------
 
-    /**
-     * One round trip to `mobile-orders`. Side effects handled centrally:
-     * permission refresh, gate mapping, revoked logout. Returns the reply
-     * (ok or not) — callers branch on [MobileOrdersReply.ok].
-     */
-    private suspend fun call(
-        c: Caller,
-        build: JsonObjectBuilder.() -> Unit,
-    ): MobileOrdersReply {
-        val body = buildJsonObject {
-            c.staffToken?.let { put("token", it) }
-            c.licenseKey?.let { put("licenseKey", it) }
-            put("installId", prefs.installId())
-            put("deviceLabel", "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(120))
-            build()
-        }
-        val raw = edge.call("mobile-orders", body, token = c.ownerJwt)
-        val reply = json.decodeFromJsonElement(MobileOrdersReply.serializer(), raw)
+    /** One tenant_info row: gate, permissions, versions, counter liveness. */
+    private suspend fun readTenantInfo(): WireTenantInfo? {
+        cloud.ensureEnrolled()
+        val rows = supabase.postgrest.from("tenant_info").select().decodeList<WireTenantInfo>()
+        val info = rows.firstOrNull() ?: return null
 
-        if (reply.reason == "revoked") {
-            auth.markStaffRevoked()
-            throw RevokedException()
-        }
-
-        // Keep permissions fresh everywhere (owner edits apply immediately).
-        reply.permissions?.let { fresh ->
-            _permissions.value = fresh
-            if (c.staffToken != null) {
-                auth.loadStaffSession()?.let { stored ->
-                    if (stored.staff.permissions != fresh) {
-                        auth.saveStaffSession(stored.copy(staff = stored.staff.copy(permissions = fresh)))
-                    }
+        _permissions.value = info.permissions
+        // Keep the stored staff permissions in step so the rest of the app
+        // (menus, buttons) reflects an owner's edit immediately.
+        if (auth.session.value is MBSession.Staff) {
+            auth.loadStaffSession()?.let { stored ->
+                if (stored.staff.permissions != info.permissions) {
+                    auth.saveStaffSession(
+                        stored.copy(staff = stored.staff.copy(permissions = info.permissions)),
+                    )
                 }
             }
         }
 
-        val gate = when (reply.reason) {
+        serverPosOnline = info.posOnline
+        serverPosOnlineAt = System.currentTimeMillis()
+        _roomId.value = info.roomId
+
+        val gate = when (info.gate) {
             "ordering-disabled" -> OrdersGate.OrderingDisabled
             "subscription" -> OrdersGate.Subscription
             "blocked" -> OrdersGate.Blocked
             "device-limit" -> OrdersGate.DeviceLimit
             else -> null
         }
-        if (gate != null) {
-            _state.value = _state.value.copy(gate = gate, refreshing = false)
-        } else if (reply.ok && _state.value.gate != null) {
-            _state.value = _state.value.copy(gate = null)
+        if (info.gate == "revoked") {
+            auth.markStaffRevoked()
+            throw RevokedException()
         }
+        _state.value = _state.value.copy(gate = gate, posOnline = effectivePosOnline())
+        return info
+    }
 
-        reply.posOnline?.let {
-            serverPosOnline = it
-            serverPosOnlineAt = System.currentTimeMillis()
-            _state.value = _state.value.copy(posOnline = effectivePosOnline())
-        }
-        return reply
+    private suspend fun readOpenOrders(): List<WireOrder> =
+        supabase.postgrest.from("live_orders")
+            .select {
+                filter { isIn("status", listOf("queued", "placed")) }
+                order("created_at", Order.DESCENDING)
+                limit(500)
+            }
+            .decodeList<WireLiveOrderRow>()
+            .map { it.toWire(json) }
+
+    private suspend fun readCatalog(): Pair<WireCatalog, List<WireCustomer>> {
+        val categories = supabase.postgrest.from("menu_categories")
+            .select { order("sort_order", Order.ASCENDING) }
+            .decodeList<WireCategoryRow>().map { it.toWire() }
+        val items = supabase.postgrest.from("menu_items")
+            .select { order("name", Order.ASCENDING) }
+            .decodeList<WireMenuItemRow>().map { it.toWire() }
+        val tables = supabase.postgrest.from("restaurant_tables")
+            .select {
+                order("section", Order.ASCENDING)
+                order("sort_order", Order.ASCENDING)
+            }
+            .decodeList<WireTableRow>().map { it.toWire() }
+        val customers = supabase.postgrest.from("credit_customers")
+            .select { order("name", Order.ASCENDING) }
+            .decodeList<WireCustomerRow>().map { it.toWire() }
+        return WireCatalog(categories, items, tables) to customers
     }
 
     // ---------------- load / refresh ----------------
@@ -189,8 +187,10 @@ class OrdersRepository @Inject constructor(
         loadMutex.withLock {
             val previous = loadedScope
             if (previous != null && previous != c.scopeKey) {
-                // Different restaurant — old data must never flash on screen.
+                // Different restaurant — old data must never flash on screen,
+                // and the credential belongs to the old one.
                 runCatching { dao.clearScope(previous) }
+                cloud.forget(signOut = false)
                 _state.value = OrdersUiState(refreshing = true)
                 lastOrdersSeq = 0L
                 lastCatalogVersion = -1L
@@ -223,127 +223,185 @@ class OrdersRepository @Inject constructor(
     }
 
     private suspend fun bootstrap(c: Caller) {
-        val reply = try {
-            call(c) { put("view", "bootstrap") }
+        val info = try {
+            readTenantInfo()
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: RevokedException) {
             throw e
         } catch (e: Exception) {
             onRefreshFailed("bootstrap", e)
             return
         }
-        if (!reply.ok) {
-            // Gate already applied by call(); stop refreshing quietly.
+        if (info == null) {
+            _state.value = _state.value.copy(refreshing = false)
+            return
+        }
+        if (info.gate.isNotEmpty()) {
+            // Gated — the gate is already on screen; there is nothing to read.
             _state.value = _state.value.copy(refreshing = false)
             return
         }
 
-        val catalog = reply.catalog ?: WireCatalog()
-        val customers = reply.customers.orEmpty()
-        val orders = reply.orders.orEmpty()
-        val name = reply.restaurant?.name?.takeIf { it.isNotEmpty() } ?: c.restaurantName
-        val now = System.currentTimeMillis()
+        try {
+            val orders = readOpenOrders()
+            val now = System.currentTimeMillis()
+            lastOrdersSeq = info.ordersSeq
 
-        lastOrdersSeq = reply.ordersSeq ?: 0L
-        lastCatalogVersion = reply.catalogVersion ?: 0L
-        _roomId.value = reply.roomId
+            // The catalog is version-gated: an unchanged menu is never
+            // re-downloaded. Catalog payloads are the main egress cost.
+            if (info.catalogVersion != lastCatalogVersion) {
+                val (catalog, customers) = readCatalog()
+                dao.replaceCatalog(
+                    c.scopeKey,
+                    catalog.categories.map { it.toEntity(c.scopeKey) },
+                    catalog.items.map { it.toEntity(c.scopeKey) },
+                    catalog.tables.map { it.toEntity(c.scopeKey) },
+                    customers.map { it.toEntity(c.scopeKey) },
+                )
+                lastCatalogVersion = info.catalogVersion
+            }
 
-        dao.replaceCatalog(
-            c.scopeKey,
-            catalog.categories.map { it.toEntity(c.scopeKey) },
-            catalog.items.map { it.toEntity(c.scopeKey) },
-            catalog.tables.map { it.toEntity(c.scopeKey) },
-            customers.map { it.toEntity(c.scopeKey) },
-        )
-        dao.replaceOrders(c.scopeKey, orders.map { it.toEntity(c.scopeKey, json) })
-        dao.putSyncState(
-            OrdersSyncStateEntity(
-                scope = c.scopeKey,
-                roomId = reply.roomId ?: "",
-                catalogVersion = lastCatalogVersion,
-                ordersSeq = lastOrdersSeq,
-                lastSyncAt = now,
-                restaurantName = name,
-            ),
-        )
-        dao.pruneEventsBefore(now - EVENT_RETENTION_MS)
+            dao.replaceOrders(c.scopeKey, orders.map { it.toEntity(c.scopeKey, json) })
+            val name = info.restaurantName.ifEmpty { c.restaurantName }
+            dao.putSyncState(
+                OrdersSyncStateEntity(
+                    scope = c.scopeKey,
+                    roomId = info.roomId,
+                    catalogVersion = lastCatalogVersion,
+                    ordersSeq = lastOrdersSeq,
+                    lastSyncAt = now,
+                    restaurantName = name,
+                ),
+            )
+            dao.pruneEventsBefore(now - EVENT_RETENTION_MS)
 
-        _state.value = OrdersUiState(
-            data = readLocal(c, restaurantName = name),
-            gate = null,
-            posOnline = effectivePosOnline(),
-            refreshing = false,
-            updatedAt = now,
-        )
-        Log.i(TAG, "[SYNC] bootstrap ok: ${orders.size} open orders, catalog v$lastCatalogVersion")
-    }
-
-    /** Doorbell/polling refresh of just the open-orders list. */
-    suspend fun refreshOrders() {
-        val c = caller() ?: return
-        val reply = try {
-            call(c) { put("view", "orders") }
+            _state.value = OrdersUiState(
+                data = readLocal(c, restaurantName = name),
+                gate = null,
+                posOnline = effectivePosOnline(),
+                refreshing = false,
+                updatedAt = now,
+            )
+            Log.i(TAG, "[SYNC] bootstrap ok: ${orders.size} open orders, catalog v$lastCatalogVersion")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onRefreshFailed("orders", e)
-            return
+            onRefreshFailed("bootstrap", e)
         }
-        if (!reply.ok) return
-        val orders = reply.orders.orEmpty()
-        lastOrdersSeq = reply.ordersSeq ?: lastOrdersSeq
-        dao.replaceOrders(c.scopeKey, orders.map { it.toEntity(c.scopeKey, json) })
-        touchSyncState(c) { it.copy(ordersSeq = lastOrdersSeq, lastSyncAt = System.currentTimeMillis()) }
-        emitFromLocal(c)
     }
 
-    /** Catalog refresh — the server answers `unchanged` when we're current. */
-    suspend fun refreshCatalog() {
+    /**
+     * A full re-read of the open set. Used on tab open, pull-to-refresh, and
+     * as the ONE catch-up read after a detected sequence gap — never on a
+     * timer.
+     */
+    suspend fun refreshOrders() {
         val c = caller() ?: return
-        val reply = try {
-            call(c) {
-                put("view", "catalog")
-                put("haveVersion", lastCatalogVersion)
+        try {
+            val info = readTenantInfo() ?: return
+            if (info.gate.isNotEmpty()) return
+            val orders = readOpenOrders()
+            lastOrdersSeq = info.ordersSeq
+            dao.replaceOrders(c.scopeKey, orders.map { it.toEntity(c.scopeKey, json) })
+            touchSyncState(c) {
+                it.copy(ordersSeq = lastOrdersSeq, lastSyncAt = System.currentTimeMillis())
             }
+            emitFromLocal(c)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RevokedException) {
+            throw e
+        } catch (e: Exception) {
+            onRefreshFailed("orders", e)
+        }
+    }
+
+    /** Catalog refresh — skipped entirely when our version is already current. */
+    suspend fun refreshCatalog(catalogVersion: Long? = null) {
+        val c = caller() ?: return
+        try {
+            val version = catalogVersion ?: readTenantInfo()?.catalogVersion ?: return
+            if (version == lastCatalogVersion) return
+            val (catalog, customers) = readCatalog()
+            dao.replaceCatalog(
+                c.scopeKey,
+                catalog.categories.map { it.toEntity(c.scopeKey) },
+                catalog.items.map { it.toEntity(c.scopeKey) },
+                catalog.tables.map { it.toEntity(c.scopeKey) },
+                customers.map { it.toEntity(c.scopeKey) },
+            )
+            lastCatalogVersion = version
+            touchSyncState(c) { it.copy(catalogVersion = version) }
+            emitFromLocal(c)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             onRefreshFailed("catalog", e)
-            return
         }
-        if (!reply.ok || reply.unchanged == true) return
-        val catalog = reply.catalog ?: return
-        lastCatalogVersion = reply.catalogVersion ?: lastCatalogVersion
-        dao.replaceCatalog(
-            c.scopeKey,
-            catalog.categories.map { it.toEntity(c.scopeKey) },
-            catalog.items.map { it.toEntity(c.scopeKey) },
-            catalog.tables.map { it.toEntity(c.scopeKey) },
-            reply.customers.orEmpty().map { it.toEntity(c.scopeKey) },
-        )
-        touchSyncState(c) { it.copy(catalogVersion = lastCatalogVersion) }
-        emitFromLocal(c)
     }
 
+    // ---------------- the bell ----------------
+
     /**
-     * Doorbell handler (wired by OrdersRealtime). A seq gap forces a full
-     * re-bootstrap so a missed ping can never leave stale truth on screen.
+     * A bell carrying the changed row. THIS IS THE WHOLE POINT OF THE
+     * REBUILD: the payload is applied straight into Room with no fetch, so
+     * one message updates every phone in the restaurant.
+     *
+     * A detected sequence gap triggers exactly ONE catch-up read, never a
+     * storm.
      */
-    fun onDoorbell(kind: String, seq: Long) {
+    fun onBell(bell: OrdersBell) {
         scope.launch {
             runCatching {
-                when (kind) {
-                    "catalog" -> refreshCatalog()
-                    "orders", "events" -> {
-                        if (seq > lastOrdersSeq + 1) {
-                            caller()?.let { bootstrap(it) }
-                        } else {
+                val c = caller() ?: return@runCatching
+                when (bell.kind) {
+                    "order" -> {
+                        // The counter's ack rides on the same message as the
+                        // order it produced, so a waiter's "Sending…"
+                        // resolves at the moment the order changes —
+                        // including when the counter REJECTED it, which is
+                        // what used to strand people.
+                        bell.event?.let { applyEventStatus(c, it) }
+
+                        if (bell.seq > 0 && lastOrdersSeq > 0 && bell.seq > lastOrdersSeq + 1) {
+                            // We missed something — one catch-up read, then stop.
+                            Log.i(TAG, "[BELL] sequence gap, one catch-up read")
                             refreshOrders()
+                            return@runCatching
                         }
-                        resolveOpenEvents()
+                        if (bell.seq > lastOrdersSeq) lastOrdersSeq = bell.seq
+                        bell.order?.let { applyOrder(c, it) }
                     }
+                    "catalog" -> refreshCatalog(bell.seq)
+                    // 'event' bells go to the counter's own topic, not ours.
                 }
-            }.onFailure { logFailure("doorbell", it) }
+            }.onFailure { logFailure("bell", it) }
         }
+    }
+
+    /** Resolve one in-flight intent from the bell. No network. */
+    private suspend fun applyEventStatus(c: Caller, e: JsonObject) {
+        val serverId = e["eventId"]?.jsonPrimitive?.content ?: return
+        val status = e["status"]?.jsonPrimitive?.content ?: return
+        val reason = e["rejectReason"]?.jsonPrimitive?.contentOrNullSafe()
+        dao.openEvents(c.scopeKey)
+            .firstOrNull { it.serverEventId == serverId }
+            ?.let { dao.putEvent(it.copy(status = status, rejectReason = reason)) }
+    }
+
+    /** Write one broadcast order into Room and re-emit. No network. */
+    private suspend fun applyOrder(c: Caller, order: WireOrder) {
+        if (order.isOpen) {
+            dao.putOrder(order.toEntity(c.scopeKey, json))
+        } else {
+            // billed or cancelled — it leaves the open set
+            dao.deleteOrder(c.scopeKey, order.clientUuid)
+        }
+        touchSyncState(c) {
+            it.copy(ordersSeq = lastOrdersSeq, lastSyncAt = System.currentTimeMillis())
+        }
+        emitFromLocal(c)
     }
 
     /** Presence verdict from OrdersRealtime (null when the socket is down). */
@@ -351,24 +409,24 @@ class OrdersRepository @Inject constructor(
         val was = presencePosOnline
         presencePosOnline = online
         _state.value = _state.value.copy(posOnline = effectivePosOnline())
-        // Presence just said the counter left the room. That may only mean the
-        // counter's socket dropped while its heartbeat is still running, so ask
-        // the server rather than sitting on a possibly stale flag — this is
-        // what makes the tab flip within ~5s when the counter really goes down.
+        // Presence says the counter left the room. That may only mean its
+        // socket dropped while it is still alive, so ask the server rather
+        // than sitting on a possibly stale flag — ONE unmetered read.
         if (online != true && was != online) {
-            scope.launch { runCatching { refreshOrders() }.onFailure { logFailure("presence-recheck", it) } }
+            scope.launch {
+                runCatching { readTenantInfo() }
+                    .onFailure { logFailure("presence-recheck", it) }
+                _state.value = _state.value.copy(posOnline = effectivePosOnline())
+            }
         }
     }
 
     /**
      * Is the counter up? The server's flag is the FLOOR, never the ceiling:
-     * `mobile-orders` accepts or rejects an event purely on its own
-     * `pos_last_seen_at` window, so refusing to let a waiter order while the
-     * server would have taken it happily is always wrong. Presence is only
-     * ever allowed to say "yes" faster, never to veto a fresh server "yes".
-     *
-     * The server flag is trusted only while recent, so a counter that dies
-     * without a presence event still drops out within one poll cycle.
+     * the server accepts or rejects an intent purely on its own
+     * pos_last_seen_at window, so refusing a waiter while the server would
+     * have taken the order happily is always wrong. Presence may only ever
+     * say "yes" faster, never veto a fresh server "yes".
      */
     private fun effectivePosOnline(): Boolean {
         if (presencePosOnline == true) return true
@@ -377,32 +435,23 @@ class OrdersRepository @Inject constructor(
     }
 
     /**
-     * Single-order lookup by cloud id — used by the detail screen to learn
-     * an order's final status (billed/cancelled) once it leaves the open set.
-     * Returns null when the order is gone or the network fails.
+     * Single-order lookup — used by the detail screen to learn an order's
+     * final status once it has left the open set.
      */
-    suspend fun fetchOrderStatus(serverId: String): String? {
-        val c = caller() ?: return null
-        val reply = try {
-            call(c) {
-                put("view", "order")
-                put("orderId", serverId)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return null
-        }
-        return if (reply.ok) reply.order?.status else null
+    suspend fun fetchOrderStatus(serverId: String): String? = try {
+        cloud.ensureEnrolled()
+        supabase.postgrest.from("live_orders")
+            .select { filter { eq("id", serverId) } }
+            .decodeList<WireLiveOrderRow>()
+            .firstOrNull()?.status
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     // ---------------- intents ----------------
 
-    /**
-     * [existingClientEventId]/[existingOrderClientUuid] make a RETRY of a
-     * failed send safe: if the first attempt actually reached the server, the
-     * duplicate id returns the original event instead of double-creating.
-     */
     suspend fun submitCreate(
         orderType: String,
         tableNumber: String,
@@ -430,15 +479,14 @@ class OrdersRepository @Inject constructor(
         orderClientUuid: String,
         items: List<OrderLine>,
         existingClientEventId: String? = null,
-    ): SubmitResult =
-        submitEvent(
-            "add_items",
-            buildJsonObject {
-                put("items", json.encodeToJsonElement(ListSerializer(OrderLine.serializer()), items))
-            },
-            orderClientUuid = orderClientUuid,
-            existingClientEventId = existingClientEventId,
-        )
+    ): SubmitResult = submitEvent(
+        "add_items",
+        buildJsonObject {
+            put("items", json.encodeToJsonElement(ListSerializer(OrderLine.serializer()), items))
+        },
+        orderClientUuid = orderClientUuid,
+        existingClientEventId = existingClientEventId,
+    )
 
     suspend fun submitVoidItems(
         orderClientUuid: String,
@@ -483,8 +531,10 @@ class OrdersRepository @Inject constructor(
     private data class VoidLine(val localId: Long, val quantity: Int)
 
     /**
-     * Submits one intent. The clientEventId makes retries safe: a duplicate
-     * returns the existing event's state and never creates a second one.
+     * Submits one intent as a Postgres RPC — a PostgREST call, not an Edge
+     * Function, so a waiter's order can never be blocked by the invocation
+     * ceiling. The clientEventId makes retries safe: a duplicate returns the
+     * existing event's state and never creates a second one.
      */
     private suspend fun submitEvent(
         kind: String,
@@ -509,13 +559,18 @@ class OrdersRepository @Inject constructor(
         )
 
         val reply = try {
-            call(c) {
-                put("action", "submit_event")
-                put("clientEventId", clientEventId)
-                put("kind", kind)
-                orderClientUuid?.let { put("orderClientUuid", it) }
-                put("payload", payload)
-            }
+            // essential: the waiter just tapped Send. If this device is not
+            // enrolled yet, enrolling for it may exceed the hourly guard.
+            cloud.ensureEnrolled(essential = true)
+            supabase.postgrest.rpc(
+                "mb_submit_event",
+                buildJsonObject {
+                    put("p_client_event_id", clientEventId)
+                    put("p_kind", kind)
+                    put("p_payload", payload)
+                    orderClientUuid?.let { put("p_order_client_uuid", it) }
+                },
+            ).decodeAs<JsonObject>()
         } catch (e: CancellationException) {
             throw e
         } catch (e: RevokedException) {
@@ -525,80 +580,121 @@ class OrdersRepository @Inject constructor(
             return SubmitResult.Failed(MBErrors.network(e))
         }
 
-        if (!reply.ok) {
-            val gate = _state.value.gate
-            markEvent(clientEventId, "failed", reason = reply.reason)
-            return SubmitResult.Failed(reasonCopy(reply.reason), gate)
+        val ok = reply["ok"]?.jsonPrimitive?.booleanOrNull == true
+        if (!ok) {
+            val reason = reply["reason"]?.jsonPrimitive?.content
+            val gate = when (reason) {
+                "ordering-disabled" -> OrdersGate.OrderingDisabled
+                "subscription" -> OrdersGate.Subscription
+                "blocked" -> OrdersGate.Blocked
+                "device-limit" -> OrdersGate.DeviceLimit
+                else -> null
+            }
+            if (gate != null) _state.value = _state.value.copy(gate = gate)
+            if (reason == "revoked") {
+                auth.markStaffRevoked()
+                throw RevokedException()
+            }
+            markEvent(clientEventId, "failed", reason = reason)
+            return SubmitResult.Failed(reasonCopy(reason), gate)
         }
 
-        val status = reply.status ?: "pending"
+        reply["permissions"]?.let { element ->
+            runCatching {
+                _permissions.value = json.decodeFromJsonElement(
+                    MapSerializer(String.serializer(), Boolean.serializer()),
+                    element,
+                )
+            }
+        }
+
+        val status = reply["status"]?.jsonPrimitive?.content ?: "pending"
+        val serverEventId = reply["eventId"]?.jsonPrimitive?.content
+        val rejectReason = reply["rejectReason"]?.jsonPrimitive?.contentOrNullSafe()
         dao.event(clientEventId)?.let {
             dao.putEvent(
-                it.copy(
-                    status = status,
-                    serverEventId = reply.eventId,
-                    rejectReason = reply.rejectReason,
-                ),
+                it.copy(status = status, serverEventId = serverEventId, rejectReason = rejectReason),
             )
         }
         return if (status == "applied" || status == "rejected") {
-            SubmitResult.AlreadyResolved(status, reply.rejectReason)
+            SubmitResult.AlreadyResolved(status, rejectReason)
         } else {
-            SubmitResult.Accepted(clientEventId, reply.eventId ?: "")
+            SubmitResult.Accepted(clientEventId, serverEventId ?: "")
         }
     }
 
     /**
-     * Waits for the POS to apply/reject an accepted intent. The realtime
-     * doorbell resolves this in ~1s; event_status polling is the fallback.
+     * Waits for the counter to apply or reject an accepted intent.
+     *
+     * The bell resolves this — the counter's ack updates order_events, whose
+     * trigger broadcasts the resolution, INCLUDING a rejection. The two
+     * fallback checks below exist only so a lost bell can never strand a
+     * waiter on "Sending…"; they replace the old 1.5-second loop that cost
+     * up to ~16 calls per order.
      */
     suspend fun awaitResolution(clientEventId: String, timeoutMs: Long = 25_000): EventResolution {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        var pollAt = 0L
-        while (System.currentTimeMillis() < deadline) {
+        val started = System.currentTimeMillis()
+        val fallbacks = longArrayOf(6_000, 15_000)
+        var nextFallback = 0
+        while (System.currentTimeMillis() - started < timeoutMs) {
             val ev = dao.event(clientEventId) ?: return EventResolution.Timeout
             when (ev.status) {
                 "applied" -> return EventResolution.Applied
                 "rejected" -> return EventResolution.Rejected(reasonCopy(ev.rejectReason))
             }
-            if (System.currentTimeMillis() >= pollAt) {
+            val elapsed = System.currentTimeMillis() - started
+            if (nextFallback < fallbacks.size && elapsed >= fallbacks[nextFallback]) {
+                nextFallback++
                 runCatching { resolveOpenEvents() }
-                pollAt = System.currentTimeMillis() + 1_500
             }
             delay(250)
         }
         return EventResolution.Timeout
     }
 
-    /** event_status sweep for everything still in flight (also the doorbell). */
+    /**
+     * One unmetered read of everything still in flight. Called on tab open,
+     * after a reconnect, and as awaitResolution's two fallbacks — never on a
+     * timer.
+     */
     suspend fun resolveOpenEvents() {
         val c = caller() ?: return
         val open = dao.openEvents(c.scopeKey).filter { it.serverEventId != null }
         if (open.isEmpty()) return
-        val reply = try {
-            call(c) {
-                put("action", "event_status")
-                putJsonArray("eventIds") {
-                    open.mapNotNull { it.serverEventId }.forEach { add(it) }
+        val rows = try {
+            cloud.ensureEnrolled()
+            supabase.postgrest.from("order_events")
+                .select {
+                    filter { isIn("id", open.mapNotNull { it.serverEventId }) }
                 }
-            }
+                .decodeList<WireEventStatusRow>()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return // transient; the next doorbell/poll tries again
+            return // transient; the bell or the next tab open tries again
         }
-        if (!reply.ok) return
         val byServerId = open.associateBy { it.serverEventId }
         var resolvedAny = false
-        reply.events.orEmpty().forEach { ws ->
-            val ev = byServerId[ws.eventId] ?: return@forEach
-            if (ev.status != ws.status) {
-                dao.putEvent(ev.copy(status = ws.status, rejectReason = ws.rejectReason))
-                if (ws.status == "applied" || ws.status == "rejected") resolvedAny = true
+        rows.forEach { row ->
+            val ev = byServerId[row.id] ?: return@forEach
+            if (ev.status != row.status) {
+                dao.putEvent(ev.copy(status = row.status, rejectReason = row.rejectReason))
+                if (row.status == "applied" || row.status == "rejected") resolvedAny = true
             }
         }
         if (resolvedAny) runCatching { refreshOrders() }
     }
+
+    /** The phone's own "I am here", so the counter's device list stays true. */
+    suspend fun touchInstall() {
+        runCatching {
+            cloud.ensureEnrolled()
+            supabase.postgrest.rpc("mb_touch_install", buildJsonObject { put("p_label", "") })
+        }
+    }
+
+    /** 5.4 — the owner-facing usage readout. */
+    fun usage(): OrdersCloud.Usage = cloud.usage()
 
     // ---------------- helpers ----------------
 
@@ -619,7 +715,8 @@ class OrdersRepository @Inject constructor(
         val orders = dao.orders(c.scopeKey)
         if (sync == null && categories.isEmpty() && orders.isEmpty()) return null
         return OrdersData(
-            restaurantName = restaurantName ?: sync?.restaurantName?.takeIf { it.isNotEmpty() }
+            restaurantName = restaurantName
+                ?: sync?.restaurantName?.takeIf { it.isNotEmpty() }
                 ?: c.restaurantName,
             categories = categories.map { it.toModel() },
             items = dao.items(c.scopeKey).map { it.toModel() },
@@ -629,7 +726,10 @@ class OrdersRepository @Inject constructor(
         )
     }
 
-    private suspend fun touchSyncState(c: Caller, mutate: (OrdersSyncStateEntity) -> OrdersSyncStateEntity) {
+    private suspend fun touchSyncState(
+        c: Caller,
+        mutate: (OrdersSyncStateEntity) -> OrdersSyncStateEntity,
+    ) {
         val current = dao.syncState(c.scopeKey) ?: OrdersSyncStateEntity(
             scope = c.scopeKey, roomId = _roomId.value ?: "", catalogVersion = 0,
             ordersSeq = 0, lastSyncAt = 0, restaurantName = c.restaurantName,
@@ -660,11 +760,12 @@ class OrdersRepository @Inject constructor(
         private const val EVENT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
 
         /**
-         * How long the server's posOnline flag stays trustworthy. The degraded
-         * poll runs every 5s and the server's own window is 75s, so 20s keeps
-         * the tab honest without flickering between refreshes.
+         * How long the server's posOnline flag stays trustworthy on the
+         * phone. The server's own window is 150s (mb_pos_live_window), so 60s
+         * keeps the badge honest — it can go stale-negative but never
+         * stale-positive past the point where the server would refuse.
          */
-        private const val SERVER_FLAG_TTL_MS = 20_000L
+        private const val SERVER_FLAG_TTL_MS = 60_000L
 
         /** Friendly copy for every machine reason in the contract. */
         fun reasonCopy(reason: String?): String = when (reason) {
@@ -683,89 +784,4 @@ class OrdersRepository @Inject constructor(
             else -> MBErrors.SERVER_DOWN
         }
     }
-}
-
-// ---------------- wire/entity/model conversion (the single place) ----------------
-
-private fun WireCategory.toEntity(scope: String) =
-    MenuCategoryEntity(scope, localId, name, sortOrder)
-
-private fun WireMenuItem.toEntity(scope: String) =
-    MenuItemEntity(scope, localId, categoryLocalId, name, price, isAvailable)
-
-private fun WireTable.toEntity(scope: String) =
-    RestaurantTableEntity(scope, localId, section, label, sortOrder, isActive)
-
-private fun WireCustomer.toEntity(scope: String) =
-    CreditCustomerEntity(scope, localId, name, phone, creditBalance)
-
-private fun WireOrder.toEntity(scope: String, json: Json) = LiveOrderEntity(
-    scope = scope,
-    clientUuid = clientUuid,
-    serverId = id,
-    status = status,
-    pendingKot = pendingKot,
-    orderType = orderType,
-    tableNumber = tableNumber,
-    section = section,
-    tokenNumber = tokenNumber,
-    billNumber = billNumber,
-    customerName = customerName,
-    customerPhone = customerPhone,
-    customerLocalId = customerLocalId,
-    paymentMode = paymentMode,
-    itemsJson = json.encodeToString(ListSerializer(OrderLine.serializer()), items),
-    printedItemsJson = json.encodeToString(ListSerializer(OrderLine.serializer()), printedItems),
-    subtotal = subtotal,
-    gst = gst,
-    total = total,
-    printError = printError,
-    createdByKind = createdByKind,
-    createdById = createdById,
-    createdByName = createdByName,
-    version = version,
-    createdAt = createdAt ?: "",
-    updatedAt = updatedAt ?: "",
-    billedAt = billedAt,
-)
-
-private fun MenuCategoryEntity.toModel() = MenuCategory(localId, name, sortOrder)
-
-private fun MenuItemEntity.toModel() = MenuItem(localId, categoryLocalId, name, price, isAvailable)
-
-private fun RestaurantTableEntity.toModel() = TableInfo(localId, section, label, sortOrder, isActive)
-
-private fun CreditCustomerEntity.toModel() = CreditCustomer(localId, name, phone, creditBalance)
-
-private fun LiveOrderEntity.toModel(json: Json): LiveOrder {
-    fun decodeLines(raw: String): List<OrderLine> = runCatching {
-        json.decodeFromString(ListSerializer(OrderLine.serializer()), raw)
-    }.getOrDefault(emptyList())
-    return LiveOrder(
-        clientUuid = clientUuid,
-        serverId = serverId,
-        status = status,
-        pendingKot = pendingKot,
-        orderType = orderType,
-        tableNumber = tableNumber,
-        section = section,
-        tokenNumber = tokenNumber,
-        billNumber = billNumber,
-        customerName = customerName,
-        customerPhone = customerPhone,
-        customerLocalId = customerLocalId,
-        paymentMode = paymentMode,
-        items = decodeLines(itemsJson),
-        printedItems = decodeLines(printedItemsJson),
-        subtotal = subtotal,
-        gst = gst,
-        total = total,
-        printError = printError,
-        createdByKind = createdByKind,
-        createdById = createdById,
-        createdByName = createdByName,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-        billedAt = billedAt,
-    )
 }

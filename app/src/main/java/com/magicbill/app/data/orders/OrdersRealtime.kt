@@ -28,8 +28,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
@@ -38,32 +40,39 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The realtime doorbell + presence for live ordering. One channel per
- * restaurant (`orders-<roomId>`); presence answers "is the counter up",
- * broadcast `mb` {kind, seq} tells us to refetch through the Edge Function —
- * no order data ever rides the socket.
+ * The phone's end of the PRIVATE orders channel.
  *
- * Lifecycle-aware: Orders screens acquire()/release() this; with zero
- * holders the socket closes (no background connection). While the socket is
- * down but a screen is visible, a 5s poll keeps correctness (degraded mode)
- * and stops the moment the socket is back.
+ * WHAT CHANGED IN THE REBUILD:
+ *  - The channel is private: RLS on realtime.messages resolves this device's
+ *    credential to its restaurant, so a phone can only ever subscribe to its
+ *    own topic. Proved by MB-backend/test/tenant-isolation.mjs.
+ *  - The bell CARRIES the changed order. There is no "go and ask" fetch and
+ *    therefore no fan-out: six phones cost one message, not six calls.
+ *  - The 5-second backup poll is GONE. A fallback read arms only after the
+ *    socket has been continuously down for 30 seconds, runs at 45 seconds,
+ *    and stops the instant the socket recovers. Even that fallback is a
+ *    PostgREST read, so it costs nothing against the invocation quota.
+ *
+ * The good property from the previous round is kept: the fallback job is a
+ * SEPARATE coroutine from the socket supervisor, so a socket failure can
+ * never leave the tab with no path at all.
  */
 @Singleton
 class OrdersRealtime @Inject constructor(
     private val supabase: SupabaseClient,
     private val repo: OrdersRepository,
+    private val cloud: OrdersCloud,
     private val prefs: SecurePrefs,
     private val network: NetworkMonitor,
+    private val json: Json,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var holders = 0
     private var runJob: Job? = null
-    private var pollJob: Job? = null
+    private var fallbackJob: Job? = null
 
     private val _socketUp = MutableStateFlow(false)
-
-    /** True while the channel is live — degraded polling switches on its inverse. */
     val socketUp: StateFlow<Boolean> = _socketUp.asStateFlow()
 
     /** Presence keys currently in the room (pos:<deviceId> / mob:<installId>). */
@@ -88,7 +97,6 @@ class OrdersRealtime @Inject constructor(
         runJob?.cancel()
         runJob = scope.launch {
             try {
-                // Re-join whenever the room or connectivity changes.
                 combine(repo.roomId, network.online) { room, online ->
                     if (online) room else null
                 }.collectLatest { room ->
@@ -96,8 +104,9 @@ class OrdersRealtime @Inject constructor(
                         markDown()
                         return@collectLatest
                     }
-                    var backoff = 1_000L
+                    var backoff = BACKOFF_START_MS
                     while (isActive) {
+                        val startedAt = System.currentTimeMillis()
                         try {
                             runChannel(room) // returns only by throwing/cancel
                         } catch (e: CancellationException) {
@@ -106,33 +115,50 @@ class OrdersRealtime @Inject constructor(
                             Log.w(TAG, "[RT] channel failed: ${e::class.simpleName}: ${e.message}")
                         }
                         markDown()
+                        // The backoff resets only after a subscription that
+                        // actually HELD — never on the subscribe event itself.
+                        // That is what stopped the counter's 2-second
+                        // reconnect loop, and the same rule applies here.
+                        backoff = if (System.currentTimeMillis() - startedAt >= STABLE_MS) {
+                            BACKOFF_START_MS
+                        } else {
+                            (backoff * 2).coerceAtMost(BACKOFF_MAX_MS)
+                        }
                         delay(backoff)
-                        backoff = (backoff * 2).coerceAtMost(30_000L)
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Anything outside the per-attempt retry (the room/network flow
-                // itself). The Orders tab must NOT go dead: pollJob below is a
-                // separate job and keeps refreshing every 5s regardless.
-                Log.e(TAG, "[RT] realtime supervisor died — staying on 5s backup polling", e)
+                // Anything outside the per-attempt retry (the room/network
+                // flow itself). The Orders tab must NOT go dead: the fallback
+                // job below is separate and keeps a refresh path alive.
+                Log.e(TAG, "[RT] realtime supervisor died — falling back to slow reads", e)
                 markDown()
             }
         }
-        // Degraded safety net, foreground only (this job dies with stop()).
-        // Deliberately independent of runJob: no realtime failure may ever
-        // leave this tab without a refresh path.
-        pollJob?.cancel()
-        pollJob = scope.launch {
+
+        // 5.2 — the safety net. Deliberately independent of runJob, and
+        // deliberately idle while the socket is healthy.
+        fallbackJob?.cancel()
+        fallbackJob = scope.launch {
+            var downSince = 0L
             while (isActive) {
-                delay(5_000)
-                if (!_socketUp.value && network.online.value) {
-                    runCatching {
-                        repo.refreshOrders()
-                        repo.resolveOpenEvents()
-                    }.onFailure { Log.w(TAG, "[RT] degraded poll failed: ${it.message}") }
+                delay(FALLBACK_TICK_MS)
+                if (_socketUp.value || !network.online.value) {
+                    downSince = 0
+                    continue
                 }
+                val now = System.currentTimeMillis()
+                if (downSince == 0L) {
+                    downSince = now
+                    continue
+                }
+                if (now - downSince < FALLBACK_ARM_AFTER_MS) continue
+                runCatching {
+                    repo.refreshOrders()
+                    repo.resolveOpenEvents()
+                }.onFailure { Log.w(TAG, "[RT] fallback read failed: ${it.message}") }
             }
         }
     }
@@ -140,7 +166,7 @@ class OrdersRealtime @Inject constructor(
     private fun stop() {
         Log.i(TAG, "[RT] stop")
         runJob?.cancel(); runJob = null
-        pollJob?.cancel(); pollJob = null
+        fallbackJob?.cancel(); fallbackJob = null
         markDown()
     }
 
@@ -154,37 +180,56 @@ class OrdersRealtime @Inject constructor(
 
     /**
      * Joins the room and stays suspended for the life of the connection.
-     * supabase-kt heals transient socket drops itself; the status collector
-     * mirrors that into [socketUp] and re-tracks presence after each rejoin.
-     * Only a failed initial subscribe (or cancellation) exits this function.
+     * Only a failed initial subscribe (or cancellation) exits this function,
+     * and the channel is always removed on the way out — a channel is never
+     * left behind for a new join to collide with.
      */
     private suspend fun runChannel(roomId: String): Nothing = coroutineScope {
+        // The credential must be current before the socket authenticates,
+        // or the server closes the join on a private topic.
+        cloud.ensureEnrolled()
+
         val installId = prefs.installId()
-        val channel = supabase.channel("orders-$roomId") {
+
+        // TWO topics, one socket:
+        //   orders-<room>        presence only — how this phone knows the
+        //                        counter is up and how the counter counts
+        //                        phones. Nothing is ever broadcast here.
+        //   orders-<room>-live   order truth. The counter does NOT subscribe
+        //                        to this one: it authors every message on it,
+        //                        and receiving them back cost a third of the
+        //                        project's realtime budget.
+        val presenceChannel = supabase.channel("orders-$roomId") {
+            isPrivate = true
             presence { key = "mob:$installId" }
+        }
+        val liveChannel = supabase.channel("orders-$roomId-live") {
+            isPrivate = true
         }
         try {
             // Register flows BEFORE subscribing so no early message is missed.
             launch {
-                channel.broadcastFlow<JsonObject>(event = "mb").collect { msg ->
-                    val kind = msg["kind"]?.jsonPrimitive?.content ?: return@collect
-                    val seq = msg["seq"]?.jsonPrimitive?.longOrNull ?: 0L
-                    repo.onDoorbell(kind, seq)
+                liveChannel.broadcastFlow<JsonObject>(event = "mb").collect { msg ->
+                    repo.onBell(parseBell(msg))
                 }
             }
             launch {
-                channel.presenceChangeFlow().collect { action -> onPresence(action) }
+                presenceChannel.presenceChangeFlow().collect { action -> onPresence(action) }
             }
             launch {
                 var wasUp = false
-                channel.status.collect { st ->
+                liveChannel.status.collect { st ->
                     val up = st == RealtimeChannel.Status.SUBSCRIBED
                     _socketUp.value = up
                     if (up && !wasUp) {
                         Log.i(TAG, "[RT] channel up")
-                        // (Re)joined: presence must be re-announced, and we
-                        // may have missed doorbells while away.
-                        runCatching { channel.track(presencePayload()) }
+                        runCatching { presenceChannel.track(presencePayload()) }
+                        // A RECONNECT DOES NOT FETCH BY ITSELF. We ask for
+                        // the open set once here because we may genuinely
+                        // have missed bells while away — that is a decision
+                        // about missed data, not a reaction to the socket,
+                        // and it happens once per real reconnect, not once
+                        // per two seconds.
                         runCatching { repo.refreshOrders(); repo.resolveOpenEvents() }
                     }
                     if (!up && wasUp) {
@@ -196,15 +241,29 @@ class OrdersRealtime @Inject constructor(
                 }
             }
 
-            withTimeoutOrNull(10_000) { channel.subscribe(blockUntilSubscribed = true) }
-                ?: throw IllegalStateException("subscribe timeout")
+            withTimeoutOrNull(SUBSCRIBE_TIMEOUT_MS) {
+                liveChannel.subscribe(blockUntilSubscribed = true)
+                presenceChannel.subscribe(blockUntilSubscribed = true)
+            } ?: throw IllegalStateException("subscribe timeout")
 
             awaitCancellation()
         } finally {
             withContext(NonCancellable) {
-                runCatching { supabase.realtime.removeChannel(channel) }
+                runCatching { supabase.realtime.removeChannel(liveChannel) }
+                runCatching { supabase.realtime.removeChannel(presenceChannel) }
             }
         }
+    }
+
+    /** One `mb` message -> a typed bell carrying the changed row. */
+    private fun parseBell(msg: JsonObject): OrdersBell {
+        val kind = msg["kind"]?.jsonPrimitive?.content ?: ""
+        val seq = msg["seq"]?.jsonPrimitive?.longOrNull ?: 0L
+        val order = msg["order"]?.let {
+            runCatching { json.decodeFromJsonElement(WireOrder.serializer(), it) }.getOrNull()
+        }
+        val event = msg["event"]?.let { runCatching { it.jsonObject }.getOrNull() }
+        return OrdersBell(kind = kind, seq = seq, order = order, event = event)
     }
 
     private fun presencePayload(): JsonObject = buildJsonObject {
@@ -226,5 +285,15 @@ class OrdersRealtime @Inject constructor(
 
     companion object {
         private const val TAG = "MB/Orders"
+        private const val BACKOFF_START_MS = 1_000L
+        private const val BACKOFF_MAX_MS = 30_000L
+
+        /** How long a subscription must hold before we trust it (rule R2). */
+        private const val STABLE_MS = 30_000L
+        private const val SUBSCRIBE_TIMEOUT_MS = 10_000L
+
+        /** 5.2 — the fallback arms only after this much continuous downtime. */
+        private const val FALLBACK_ARM_AFTER_MS = 30_000L
+        private const val FALLBACK_TICK_MS = 45_000L
     }
 }

@@ -175,7 +175,11 @@ interface OrdersLocalDao {
         clearCustomers(scope); upsertCustomers(customers)
     }
 
-    // ---- live orders (server returns the full open set each time) ----
+    // ---- live orders ----
+    // A full read replaces the open set; a bell carrying one changed order
+    // writes just that row (putOrder), or removes it once it is billed or
+    // cancelled (deleteOrder). No Room schema change: same table, same
+    // columns — only the write path is new.
 
     @Query("SELECT * FROM live_orders_local WHERE scope = :scope ORDER BY createdAt DESC")
     suspend fun orders(scope: String): List<LiveOrderEntity>
@@ -184,6 +188,13 @@ interface OrdersLocalDao {
     suspend fun order(scope: String, clientUuid: String): LiveOrderEntity?
 
     @Upsert suspend fun upsertOrders(rows: List<LiveOrderEntity>)
+
+    /** Apply ONE order from a broadcast. */
+    @Upsert suspend fun putOrder(row: LiveOrderEntity)
+
+    /** An order that has left the open set (billed / cancelled). */
+    @Query("DELETE FROM live_orders_local WHERE scope = :scope AND clientUuid = :clientUuid")
+    suspend fun deleteOrder(scope: String, clientUuid: String)
 
     @Query("DELETE FROM live_orders_local WHERE scope = :scope") suspend fun clearOrders(scope: String)
 

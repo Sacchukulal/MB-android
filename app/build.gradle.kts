@@ -24,8 +24,8 @@ android {
         applicationId = "com.magicbill.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "2.3.1"
+        versionCode = 10
+        versionName = "2.4.0"
 
         buildConfigField("String", "SUPABASE_URL", "\"${secret("SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${secret("SUPABASE_ANON_KEY")}\"")

@@ -148,6 +148,26 @@ fun StaffProfileScreen(
 
         if (canSeePlan) planState.data?.let { PlanSection(it) }
 
+        // 5.4 — a quiet, plain-English usage readout, so the owner never has
+        // to log in to Supabase to know whether the app is behaving. In
+        // normal running this reads zero: the phone registers with Magic Bill
+        // once and then works over its live connection.
+        if (session.staff.permissions.has(PermissionKey.TakeOrders)) {
+            val usage = remember { accountViewModel.usage() }
+            SectionHeader("Cloud usage")
+            Text(
+                if (usage.lastHour == 0 && usage.last24h == 0) {
+                    "Nothing in the last 24 hours — normal. This phone registers " +
+                        "with Magic Bill once and then works over its live connection."
+                } else {
+                    "${usage.lastHour} in the last hour, ${usage.last24h} in the " +
+                        "last 24 hours."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
         SectionHeader("Appearance")
         Row(
             Modifier.fillMaxWidth().padding(vertical = 6.dp),
