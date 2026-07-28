@@ -243,9 +243,11 @@ private fun OrdersContent(
     val otherOrders = byTable[""].orEmpty()
     val parcelOrders = openOrders.filter { it.orderType != "Table" }
 
-    // Section chips only when the master actually uses sections.
+    // Section chips only when the master actually uses sections. They come off
+    // the same grouping the tiles use, so chip order and heading order can
+    // never drift apart.
     val sections = remember(activeTables) {
-        activeTables.map { it.section }.filter { it.isNotEmpty() }.distinct()
+        groupTables(activeTables).map { it.section }.filter { it.isNotEmpty() }
     }
     var sectionIndex by rememberSaveable { mutableIntStateOf(0) }
     val chipLabels = if (sections.isEmpty()) emptyList() else listOf("All") + sections
@@ -517,8 +519,9 @@ private fun TableTile(
                     overflow = TextOverflow.Ellipsis,
                 )
             } else {
+                // A tile is ~100dp wide; anything longer than this ellipsises.
                 Text(
-                    "Free · tap to order",
+                    "Free",
                     style = MaterialTheme.typography.labelSmall,
                     color = scheme.onSurfaceVariant,
                     maxLines = 1,
