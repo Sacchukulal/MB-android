@@ -45,8 +45,14 @@ data class WireTenantInfo(
      * never decay, an age can. Null means it has never checked in.
      */
     @SerialName("pos_seconds_since_seen") val posSecondsSinceSeen: Long? = null,
-    /** The window the server itself applies, so we never hard-code it. */
-    @SerialName("pos_live_window_seconds") val posLiveWindowSeconds: Long = 150,
+    /**
+     * The window the server itself applies, so we never hard-code it. The
+     * default here is only a fallback for a reply that somehow omits the
+     * column; in practice the number always comes from the server, so the
+     * phone cannot hold a window that has drifted out of step with the one
+     * actually being enforced.
+     */
+    @SerialName("pos_live_window_seconds") val posLiveWindowSeconds: Long = 300,
 )
 
 // ---------------- catalog mirrors ----------------

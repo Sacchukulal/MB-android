@@ -41,7 +41,7 @@ import javax.inject.Singleton
  *     a rolling log that survives restarts, and the ceilings are checked
  *     before the call is made.
  *
- * WHAT CHANGED IN 2.4.3 — this class was the bug.
+ * WHAT CHANGED IN 2.4.4 — this class was the bug.
  *
  * The "have I enrolled?" answer used to live in a plain field. A field is
  * empty in a fresh process, so every single app open re-minted a credential

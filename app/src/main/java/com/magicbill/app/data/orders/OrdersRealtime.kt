@@ -56,6 +56,12 @@ import javax.inject.Singleton
  * The good property from the previous round is kept: the fallback job is a
  * SEPARATE coroutine from the socket supervisor, so a socket failure can
  * never leave the tab with no path at all.
+ *
+ * WHAT CHANGED IN 2.4.4: the 10-second badge tick is gone. The counter's
+ * status is now checked on events and then trusted for five minutes, and the
+ * job that does it sleeps for exactly however long is left of that. Every
+ * coroutine in here is owned by acquire()/release(), so a phone with no
+ * Orders surface on screen runs nothing at all.
  */
 @Singleton
 class OrdersRealtime @Inject constructor(
