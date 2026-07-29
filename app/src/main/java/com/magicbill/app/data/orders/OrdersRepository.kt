@@ -85,26 +85,38 @@ class OrdersRepository @Inject constructor(
     private var lastCatalogVersion = -1L
 
     /**
-     * The counter's liveness, held as an AGE plus the moment we learnt it.
+     * WHAT WE KNOW ABOUT THE COUNTER, and exactly when we learnt it.
      *
-     * `posSeenAgeMs` is how stale the counter was when the server told us;
-     * `posSeenLearntAt` is this device's own elapsed-time reading at that
-     * moment. Adding the two gives the counter's current staleness with no
-     * further reads, no polling, and no dependence on the two machines'
-     * clocks agreeing.
+     * `serverAgeMs` is how stale the counter was when the SERVER told us;
+     * `learntAt` is this device's own elapsed-time reading at that moment.
+     * Holding both means the knowledge can decay honestly, with no polling
+     * and no dependence on the two machines' clocks agreeing.
      *
-     * It is deliberately NOT a boolean. A cached "online" cannot decay, and
-     * that is exactly what went wrong: the counter was killed, no presence
-     * leave ever arrived, and the phone showed "Counter online" for four
-     * minutes after the server had stopped accepting orders.
+     * It is deliberately not a boolean. A cached "online" cannot decay, and
+     * that is exactly what went wrong once already: the counter was killed,
+     * no presence leave ever arrived, and the phone showed "Counter online"
+     * for four minutes after the server had stopped accepting orders.
      */
-    private var posSeenAgeMs: Long? = null
-    private var posSeenLearntAt = 0L
-    private var posLiveWindowMs = 150_000L
+    private data class PosReading(
+        val serverAgeMs: Long,
+        val windowMs: Long,
+        val learntAt: Long,
+    )
 
-    /** Guards against stacking liveness re-checks on a slow connection. */
     @Volatile
-    private var recheckInFlight = false
+    private var posReading: PosReading? = null
+
+    /** The server's own window, so no number here has to be kept in step. */
+    @Volatile
+    private var posLiveWindowMs = DEFAULT_POS_WINDOW_MS
+
+    /** True once a renewal has actually been attempted and failed. */
+    @Volatile
+    private var lastCheckFailed = false
+
+    /** Guards against stacking status checks on a slow connection. */
+    @Volatile
+    private var checkInFlight = false
 
     // ---------------- caller identity ----------------
 
@@ -120,10 +132,34 @@ class OrdersRepository @Inject constructor(
 
     // ---------------- transport ----------------
 
+    /**
+     * Runs one PostgREST call under this device's credential.
+     *
+     * On an enrolled phone `ensureEnrolled()` is two reads from encrypted
+     * preferences — no network, no Edge call. The only thing that ever buys
+     * a new credential is the server ITSELF saying no on a real call, which
+     * is what the retry below reacts to. We never re-mint pre-emptively;
+     * doing that on every app start is what caused this whole bug.
+     */
+    private suspend fun <T> underCredential(block: suspend () -> T): T {
+        cloud.ensureEnrolled()
+        return try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!cloud.isCredentialRejection(e)) throw e
+            Log.i(TAG, "[ENROL] the server rejected our credential — recovering once")
+            cloud.recoverFromRejection()
+            block()
+        }
+    }
+
     /** One tenant_info row: gate, permissions, versions, counter liveness. */
     private suspend fun readTenantInfo(): WireTenantInfo? {
-        cloud.ensureEnrolled()
-        val rows = supabase.postgrest.from("tenant_info").select().decodeList<WireTenantInfo>()
+        val rows = underCredential {
+            supabase.postgrest.from("tenant_info").select().decodeList<WireTenantInfo>()
+        }
         val info = rows.firstOrNull() ?: return null
 
         _permissions.value = info.permissions
@@ -139,9 +175,19 @@ class OrdersRepository @Inject constructor(
             }
         }
 
-        posLiveWindowMs = info.posLiveWindowSeconds * 1000
-        posSeenAgeMs = info.posSecondsSinceSeen?.times(1000)
-        posSeenLearntAt = SystemClock.elapsedRealtime()
+        // A completed read IS the counter-status check (§4.4). There is no
+        // separate liveness request anywhere in the app.
+        posLiveWindowMs = (info.posLiveWindowSeconds * 1000).takeIf { it > 0 }
+            ?: DEFAULT_POS_WINDOW_MS
+        posReading = PosReading(
+            // A null age means the counter has NEVER checked in. That is a
+            // real answer from the server, not a failure to get one — this
+            // till has never come online — so it reads OFFLINE, not UNKNOWN.
+            serverAgeMs = info.posSecondsSinceSeen?.times(1000) ?: NEVER_SEEN_MS,
+            windowMs = posLiveWindowMs,
+            learntAt = SystemClock.elapsedRealtime(),
+        )
+        lastCheckFailed = false
         _roomId.value = info.roomId
 
         val gate = when (info.gate) {
@@ -155,11 +201,11 @@ class OrdersRepository @Inject constructor(
             auth.markStaffRevoked()
             throw RevokedException()
         }
-        _state.value = _state.value.copy(gate = gate, posOnline = effectivePosOnline())
+        _state.value = _state.value.copy(gate = gate, posStatus = posStatus())
         return info
     }
 
-    private suspend fun readOpenOrders(): List<WireOrder> =
+    private suspend fun readOpenOrders(): List<WireOrder> = underCredential {
         supabase.postgrest.from("live_orders")
             .select {
                 filter { isIn("status", listOf("queued", "placed")) }
@@ -168,8 +214,9 @@ class OrdersRepository @Inject constructor(
             }
             .decodeList<WireLiveOrderRow>()
             .map { it.toWire(json) }
+    }
 
-    private suspend fun readCatalog(): Pair<WireCatalog, List<WireCustomer>> {
+    private suspend fun readCatalog(): Pair<WireCatalog, List<WireCustomer>> = underCredential {
         val categories = supabase.postgrest.from("menu_categories")
             .select { order("sort_order", Order.ASCENDING) }
             .decodeList<WireCategoryRow>().map { it.toWire() }
@@ -185,7 +232,7 @@ class OrdersRepository @Inject constructor(
         val customers = supabase.postgrest.from("credit_customers")
             .select { order("name", Order.ASCENDING) }
             .decodeList<WireCustomerRow>().map { it.toWire() }
-        return WireCatalog(categories, items, tables) to customers
+        WireCatalog(categories, items, tables) to customers
     }
 
     // ---------------- load / refresh ----------------
@@ -211,13 +258,20 @@ class OrdersRepository @Inject constructor(
                 _state.value = OrdersUiState(refreshing = true)
                 lastOrdersSeq = 0L
                 lastCatalogVersion = -1L
-                posSeenAgeMs = null
-                posSeenLearntAt = 0L
+                posReading = null
+                lastCheckFailed = false
                 _roomId.value = null
             }
             loadedScope = c.scopeKey
 
-            if (!force && _state.value.data != null) return
+            if (!force && _state.value.data != null) {
+                // The orders are already in memory, so there is nothing to
+                // re-download — but arriving on this screen is trigger (a)/(b)
+                // for the counter's status, and this is where the old code
+                // showed a waiter whatever it had decided minutes ago.
+                checkCounterStatus(minGapMs = 0)
+                return
+            }
 
             // 1) Room mirror, instantly.
             val cached = readLocal(c)
@@ -297,7 +351,7 @@ class OrdersRepository @Inject constructor(
             _state.value = OrdersUiState(
                 data = readLocal(c, restaurantName = name),
                 gate = null,
-                posOnline = effectivePosOnline(),
+                posStatus = posStatus(),
                 refreshing = false,
                 updatedAt = now,
             )
@@ -326,6 +380,7 @@ class OrdersRepository @Inject constructor(
                 it.copy(ordersSeq = lastOrdersSeq, lastSyncAt = System.currentTimeMillis())
             }
             emitFromLocal(c)
+            Log.i(TAG, "[SYNC] re-read the open set: ${orders.size} orders")
         } catch (e: CancellationException) {
             throw e
         } catch (e: RevokedException) {
@@ -374,9 +429,10 @@ class OrdersRepository @Inject constructor(
             runCatching {
                 val c = caller() ?: return@runCatching
                 // Whatever this bell says, only the counter could have sent
-                // it, so it is proof the counter was alive a moment ago.
+                // it, so it is proof the counter was alive a moment ago —
+                // trigger (d), and the only one that costs nothing at all.
                 noteCounterAlive()
-                _state.value = _state.value.copy(posOnline = effectivePosOnline())
+                _state.value = _state.value.copy(posStatus = posStatus())
                 when (bell.kind) {
                     "order" -> {
                         // The counter's ack rides on the same message as the
@@ -426,90 +482,167 @@ class OrdersRepository @Inject constructor(
         emitFromLocal(c)
     }
 
-    /**
-     * Presence changed on the realtime channel (null when the socket is
-     * down). Presence is now only ever a TRIGGER TO GO AND ASK — it is never
-     * the answer. Treating it as the answer is what let the phone claim
-     * "Counter online" for four minutes after the counter had been killed:
-     * a process that dies does not send a presence leave, so the stale entry
-     * sat there asserting a counter that was not there.
-     */
-    fun setPresencePosOnline(online: Boolean?) {
-        scope.launch {
-            runCatching { readTenantInfo() }
-                .onFailure { logFailure("presence-recheck", it) }
-            _state.value = _state.value.copy(posOnline = effectivePosOnline())
-        }
-    }
+    // ---------------- is the counter alive? (§4.3, §4.4) ----------------
 
     /**
-     * Is the counter up? Computed exactly the way the server computes it, so
-     * the badge and the server can never disagree: the counter's staleness
-     * when we last asked, plus however long ago that was, against the
-     * server's own window.
+     * The three states, and how each one is reached.
      *
-     * Getting this wrong in either direction is a real failure. Saying
-     * "offline" while the server would still accept refuses a waiter for no
-     * reason; saying "online" after the server has given up lets a waiter
-     * build a whole order and only discover it when Send fails.
+     *   ONLINE   a check came back saying the counter is inside the server's
+     *            window, or a bell arrived (only the counter authors those).
+     *   OFFLINE  a check came back saying it is NOT. Server-confirmed. We
+     *            never arrive here by assumption.
+     *   UNKNOWN  we could not check: never checked, or our reading has run
+     *            out and renewing it failed.
+     *
+     * The distinction is the whole point. "I could not check" used to be
+     * rendered as "Counter offline", which told a waiter the owner's till was
+     * dead when the truth was that the PHONE could not ask. That is the bug
+     * that put "Counter offline" on two phones for twenty minutes while the
+     * counter sat there working perfectly.
      */
-    private fun effectivePosOnline(): Boolean {
-        val age = posSeenAgeMs ?: return false
-        val sinceWeAsked = SystemClock.elapsedRealtime() - posSeenLearntAt
-        return age + sinceWeAsked < posLiveWindowMs
+    private fun posStatus(): PosStatus {
+        val r = posReading ?: return PosStatus.Unknown
+        val heldFor = SystemClock.elapsedRealtime() - r.learntAt
+        val verdict =
+            if (r.serverAgeMs < r.windowMs) PosStatus.Online else PosStatus.Offline
+
+        // Inside the trust window the reading stands, whatever happens. That
+        // is the deal: one check, then five minutes of no requests at all.
+        if (heldFor < TRUST_MS) return verdict
+
+        // Past it, the reading is living on borrowed time. It stands until a
+        // renewal has actually been tried and failed, or until it is simply
+        // too old to stand behind — and then we say we do not know, rather
+        // than inventing an answer in either direction.
+        if (lastCheckFailed || heldFor > TRUST_MS + TRUST_GRACE_MS) return PosStatus.Unknown
+        return verdict
     }
 
     /**
      * A bell is proof the counter was alive when it wrote. Order truth and
      * catalog bumps are only ever authored by the counter, so receiving one
-     * resets the staleness clock without a read.
+     * renews our knowledge for free — no request, no round trip. In a busy
+     * restaurant this means the phone never asks about the counter at all.
      */
     private fun noteCounterAlive() {
-        posSeenAgeMs = 0
-        posSeenLearntAt = SystemClock.elapsedRealtime()
+        posReading = PosReading(0, posLiveWindowMs, SystemClock.elapsedRealtime())
+        lastCheckFailed = false
     }
 
     /**
-     * Re-evaluate the counter badge from what we already know. Costs
-     * nothing — no network, no database — and exists because the badge
-     * decays with time: when a counter dies there is no read, no bell and
-     * no presence event to trigger a recalculation, so without a tick the
-     * screen would keep showing whatever it last decided. That is exactly
-     * how a killed counter went on reading "Counter online" for four
-     * minutes. Driven by OrdersRealtime while an Orders surface is visible.
+     * Submitting an intent runs the server's own counter-is-alive gate, so
+     * the reply is a free and perfectly current reading — better than
+     * anything we could have gone and asked for. An accepted intent means
+     * the counter was alive; a `pos-offline` refusal means it was not.
      */
-    fun tickPosOnline() {
-        val now = effectivePosOnline()
-        if (_state.value.posOnline != now) {
-            _state.value = _state.value.copy(posOnline = now)
-        }
-
-        // About to run out of road: go and ask before declaring the counter
-        // dead. Without this the badge decays to "offline" on a counter that
-        // is working perfectly, simply because nothing happened for a couple
-        // of minutes — no bell, no presence change, nothing to refresh what
-        // we know. Refusing a waiter the server would have served is just as
-        // wrong as inviting an order the server will reject.
-        //
-        // This is a PostgREST read, not an Edge Function, so it is unmetered;
-        // and it only ever fires when our knowledge is genuinely about to go
-        // stale, never while orders are flowing.
-        val age = posSeenAgeMs ?: return
-        val projected = age + (SystemClock.elapsedRealtime() - posSeenLearntAt)
-        if (projected < posLiveWindowMs - RECHECK_HEADROOM_MS) return
-        if (recheckInFlight) return
-        recheckInFlight = true
-        scope.launch {
-            try {
-                readTenantInfo()
-                _state.value = _state.value.copy(posOnline = effectivePosOnline())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logFailure("liveness recheck", e)
-            } finally {
-                recheckInFlight = false
+    private fun noteCounterFromSubmit(reply: JsonObject) {
+        val ok = reply["ok"]?.jsonPrimitive?.booleanOrNull == true
+        when {
+            ok -> noteCounterAlive()
+            reply["reason"]?.jsonPrimitive?.content == "pos-offline" -> {
+                posReading = PosReading(
+                    serverAgeMs = posLiveWindowMs,
+                    windowMs = posLiveWindowMs,
+                    learntAt = SystemClock.elapsedRealtime(),
+                )
+                lastCheckFailed = false
             }
+        }
+        _state.value = _state.value.copy(posStatus = posStatus())
+    }
+
+    /**
+     * The ONE way the counter's status is checked. One `tenant_info` row over
+     * PostgREST — unmetered, a few hundred bytes — and it also refreshes the
+     * gate, the permissions and the catalog version, so it is never a request
+     * made for the badge alone.
+     *
+     * There is no timer behind this. It runs on events only (§4.4): the app
+     * coming to the foreground, an Orders page opening, a pull to refresh,
+     * the counter joining the room, connectivity returning, and the single
+     * catch-up when a trusted reading expires while a surface is visible.
+     *
+     * @param minGapMs skip if a reading this fresh is already in hand. Used
+     * by the triggers we do not control the rate of, so a flapping socket can
+     * never turn an event into a poll.
+     * @return true if a reading was obtained.
+     */
+    suspend fun checkCounterStatus(minGapMs: Long): Boolean {
+        // Say what we honestly know BEFORE going to ask. A reading can have
+        // run out while the screen was away, and a slow connection would
+        // otherwise leave a stale "Counter online" on a waiter's screen for
+        // as long as the request takes. Free — no network, no database.
+        _state.value = _state.value.copy(posStatus = posStatus())
+
+        val r = posReading
+        if (minGapMs > 0 && r != null &&
+            SystemClock.elapsedRealtime() - r.learntAt < minGapMs
+        ) {
+            return true
+        }
+        if (checkInFlight) return false
+        checkInFlight = true
+        return try {
+            readTenantInfo()
+            val status = posStatus()
+            _state.value = _state.value.copy(posStatus = status)
+            // The one line that makes this whole model auditable from a phone
+            // log: what we asked, what came back, and how long it stands for.
+            Log.i(
+                TAG,
+                "[STATUS] counter=$status " +
+                    "(server last saw it ${(posReading?.serverAgeMs ?: 0) / 1000}s ago) " +
+                    "— trusting for ${TRUST_MS / 60_000} min",
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RevokedException) {
+            throw e
+        } catch (e: Exception) {
+            // We asked and got nothing back. Say so — do NOT turn a phone's
+            // failure into an accusation against the counter.
+            lastCheckFailed = true
+            _state.value = _state.value.copy(posStatus = posStatus())
+            logFailure("counter status", e)
+            false
+        } finally {
+            checkInFlight = false
+        }
+    }
+
+    /**
+     * How long the current reading may still be trusted, in milliseconds.
+     * OrdersRealtime waits exactly this long and then checks once — which is
+     * why there is no fixed tick anywhere: the wait is anchored to the last
+     * real answer, not to a clock.
+     */
+    fun msUntilStatusCheckDue(): Long {
+        val r = posReading ?: return 0
+        return (TRUST_MS - (SystemClock.elapsedRealtime() - r.learntAt)).coerceAtLeast(0)
+    }
+
+    /**
+     * The counter appeared in — or vanished from — the presence room.
+     * Presence is only ever a TRIGGER TO GO AND ASK, never the answer: a
+     * process that is killed does not send a leave, so a stale entry will sit
+     * there asserting a counter that is not running.
+     *
+     * This is what brings a phone back to "Counter online" seconds after the
+     * till is restarted, with no user action and no app restart.
+     */
+    fun onCounterPresenceChanged() {
+        scope.launch {
+            runCatching { checkCounterStatus(minGapMs = PRESENCE_MIN_GAP_MS) }
+                .onFailure { logFailure("presence check", it) }
+        }
+    }
+
+    /** The phone got its connection back — ask again straight away (V4). */
+    fun onConnectivityRestored() {
+        scope.launch {
+            runCatching { checkCounterStatus(minGapMs = 0) }
+                .onFailure { logFailure("reconnect check", it) }
         }
     }
 
@@ -518,11 +651,12 @@ class OrdersRepository @Inject constructor(
      * final status once it has left the open set.
      */
     suspend fun fetchOrderStatus(serverId: String): String? = try {
-        cloud.ensureEnrolled()
-        supabase.postgrest.from("live_orders")
-            .select { filter { eq("id", serverId) } }
-            .decodeList<WireLiveOrderRow>()
-            .firstOrNull()?.status
+        underCredential {
+            supabase.postgrest.from("live_orders")
+                .select { filter { eq("id", serverId) } }
+                .decodeList<WireLiveOrderRow>()
+                .firstOrNull()?.status
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -638,26 +772,31 @@ class OrdersRepository @Inject constructor(
         )
 
         val reply = try {
-            // essential: the waiter just tapped Send. If this device is not
-            // enrolled yet, enrolling for it may exceed the hourly guard.
-            cloud.ensureEnrolled(essential = true)
-            supabase.postgrest.rpc(
-                "mb_submit_event",
-                buildJsonObject {
-                    put("p_client_event_id", clientEventId)
-                    put("p_kind", kind)
-                    put("p_payload", payload)
-                    orderClientUuid?.let { put("p_order_client_uuid", it) }
-                },
-            ).decodeAs<JsonObject>()
+            underCredential {
+                supabase.postgrest.rpc(
+                    "mb_submit_event",
+                    buildJsonObject {
+                        put("p_client_event_id", clientEventId)
+                        put("p_kind", kind)
+                        put("p_payload", payload)
+                        orderClientUuid?.let { put("p_order_client_uuid", it) }
+                    },
+                ).decodeAs<JsonObject>()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: RevokedException) {
             throw e
         } catch (e: Exception) {
             markEvent(clientEventId, "failed", reason = null)
-            return SubmitResult.Failed(MBErrors.network(e))
+            return SubmitResult.Failed(failureCopy(e))
         }
+
+        // The server answered, which means the counter's liveness gate ran.
+        // An accepted intent is therefore proof the counter was alive a
+        // moment ago, and a `pos-offline` refusal is proof it was not —
+        // both free, both more current than anything we could have read.
+        noteCounterFromSubmit(reply)
 
         val ok = reply["ok"]?.jsonPrimitive?.booleanOrNull == true
         if (!ok) {
@@ -741,12 +880,13 @@ class OrdersRepository @Inject constructor(
         val open = dao.openEvents(c.scopeKey).filter { it.serverEventId != null }
         if (open.isEmpty()) return
         val rows = try {
-            cloud.ensureEnrolled()
-            supabase.postgrest.from("order_events")
-                .select {
-                    filter { isIn("id", open.mapNotNull { it.serverEventId }) }
-                }
-                .decodeList<WireEventStatusRow>()
+            underCredential {
+                supabase.postgrest.from("order_events")
+                    .select {
+                        filter { isIn("id", open.mapNotNull { it.serverEventId }) }
+                    }
+                    .decodeList<WireEventStatusRow>()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -767,8 +907,9 @@ class OrdersRepository @Inject constructor(
     /** The phone's own "I am here", so the counter's device list stays true. */
     suspend fun touchInstall() {
         runCatching {
-            cloud.ensureEnrolled()
-            supabase.postgrest.rpc("mb_touch_install", buildJsonObject { put("p_label", "") })
+            underCredential {
+                supabase.postgrest.rpc("mb_touch_install", buildJsonObject { put("p_label", "") })
+            }
         }
     }
 
@@ -781,7 +922,7 @@ class OrdersRepository @Inject constructor(
         val data = readLocal(c) ?: return
         _state.value = _state.value.copy(
             data = data,
-            posOnline = effectivePosOnline(),
+            posStatus = posStatus(),
             refreshing = false,
             error = null,
             updatedAt = System.currentTimeMillis(),
@@ -820,13 +961,35 @@ class OrdersRepository @Inject constructor(
         dao.event(clientEventId)?.let { dao.putEvent(it.copy(status = status, rejectReason = reason)) }
     }
 
+    /**
+     * A refresh failed. The reading we already have on screen STAYS there —
+     * cached orders are never replaced by an error, which is the single worst
+     * part of what the staff phone did. `error` is set only when there is
+     * genuinely nothing else to show.
+     */
     private fun onRefreshFailed(what: String, e: Exception) {
         Log.w(TAG, "[NET] $what refresh failed: ${e::class.simpleName}: ${e.message}")
+        lastCheckFailed = true
         val s = _state.value
         _state.value = s.copy(
             refreshing = false,
-            error = if (s.data == null) MBErrors.network(e) else null,
+            posStatus = posStatus(),
+            error = if (s.data == null) failureCopy(e) else null,
         )
+    }
+
+    /**
+     * User-facing copy for a failure in the ordering path. It must never
+     * blame the counter for something that happened on this phone.
+     */
+    private fun failureCopy(e: Throwable): String = when (e) {
+        is OrdersCloud.BudgetExceeded ->
+            "This phone has tried to register with Magic Bill far too many " +
+                "times, so it has stopped for now. Your saved orders are still " +
+                "here. If this keeps happening, sign out and sign in again."
+        is OrdersCloud.NotEnrolled -> reasonCopy(e.reason)
+        is Exception -> MBErrors.network(e)
+        else -> MBErrors.UNKNOWN
     }
 
     private fun logFailure(what: String, e: Throwable) {
@@ -839,12 +1002,41 @@ class OrdersRepository @Inject constructor(
         private const val EVENT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
 
         /**
-         * How close to the liveness window we let our knowledge get before
-         * re-reading rather than assuming the counter has died. 30s gives a
-         * slow connection several attempts before the badge would have to
-         * flip, so a working counter is never declared dead by accident.
+         * How long a successful check is trusted. Five minutes, matching
+         * `mb_pos_live_window()` on the server (migration 0019) — they are
+         * equal on purpose, so the badge and the server cannot disagree.
+         *
+         * In this window the phone makes NO requests about the counter at
+         * all, whatever happens. That is the whole behaviour change: an idle
+         * phone with the Orders tab open costs one small unmetered read every
+         * five minutes, and a phone with the tab closed costs nothing.
          */
-        private const val RECHECK_HEADROOM_MS = 30_000L
+        private const val TRUST_MS = 5 * 60_000L
+
+        /**
+         * How long a reading may stand past its trust window while we are
+         * still trying to renew it. Beyond this we simply do not know, and we
+         * say so. Bounds how long a phone that was put down for hours can
+         * show a verdict nobody has confirmed.
+         */
+        private const val TRUST_GRACE_MS = 5 * 60_000L
+
+        /**
+         * A presence event is a trigger, not an answer — but it is a trigger
+         * whose rate we do not control, so it may cost at most one check a
+         * minute. A flapping socket can never turn it into a poll.
+         */
+        private const val PRESENCE_MIN_GAP_MS = 60_000L
+
+        /**
+         * Used only until the first reading arrives; the real number always
+         * comes from `tenant_info.pos_live_window_seconds`, so this one can
+         * never drift out of step with the server.
+         */
+        private const val DEFAULT_POS_WINDOW_MS = 300_000L
+
+        /** "The counter has never checked in" — a real answer, and a bad one. */
+        private const val NEVER_SEEN_MS = Long.MAX_VALUE / 4
 
         /** Friendly copy for every machine reason in the contract. */
         fun reasonCopy(reason: String?): String = when (reason) {

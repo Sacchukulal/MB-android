@@ -67,6 +67,7 @@ import com.magicbill.app.core.tableNumberBelongsTo
 import com.magicbill.app.data.orders.LiveOrder
 import com.magicbill.app.data.orders.OrdersData
 import com.magicbill.app.data.orders.OrdersGate
+import com.magicbill.app.data.orders.PosStatus
 import com.magicbill.app.data.orders.TableInfo
 import com.magicbill.app.ui.components.GlowBackground
 import com.magicbill.app.ui.components.ListRow
@@ -137,7 +138,7 @@ fun OrdersScreen(
                         )
                         Text("Orders", style = MaterialTheme.typography.headlineSmall)
                     }
-                    StatusChip(online = online, posOnline = state.posOnline, gate = state.gate)
+                    StatusChip(online = online, posStatus = state.posStatus, gate = state.gate)
                 }
 
                 when {
@@ -620,14 +621,22 @@ internal fun elapsedText(iso: String): String {
 
 // ---------------- status chip + gates ----------------
 
+/**
+ * Three tones for three states, and never a fourth meaning smuggled into one
+ * of them. "Can't reach Magic Bill" points at this phone; "Counter offline"
+ * points at the owner's till. Saying the second when we mean the first is the
+ * bug this release exists to fix — a waiter was told the till was dead while
+ * it was sitting there taking orders perfectly happily.
+ */
 @Composable
-internal fun StatusChip(online: Boolean, posOnline: Boolean, gate: OrdersGate?) {
+internal fun StatusChip(online: Boolean, posStatus: PosStatus, gate: OrdersGate?) {
     val (text, status) = when {
         !online -> "No internet" to MBBadgeStatus.Expired
         gate == OrdersGate.OrderingDisabled -> "Ordering off" to MBBadgeStatus.Neutral
         gate != null -> "Unavailable" to MBBadgeStatus.Neutral
-        posOnline -> "Counter online" to MBBadgeStatus.Active
-        else -> "Counter offline" to MBBadgeStatus.Grace
+        posStatus == PosStatus.Online -> "Counter online" to MBBadgeStatus.Active
+        posStatus == PosStatus.Offline -> "Counter offline" to MBBadgeStatus.Grace
+        else -> "Can't reach Magic Bill" to MBBadgeStatus.Neutral
     }
     MBBadge(text, status)
 }

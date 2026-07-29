@@ -1,12 +1,12 @@
 package com.magicbill.app.data.orders
 
-import com.magicbill.app.core.PermissionMap
 import kotlinx.serialization.Serializable
 
 /**
- * Wire DTOs for the `mobile-orders` Edge Function (camelCase, exactly the
- * shapes in MB-backend/ORDERS_CONTRACT.md). The wire shape is converted
- * to/from app models ONLY inside OrdersRepository — it never leaks into Room
+ * Wire DTOs for live ordering (camelCase, exactly the shapes in
+ * MB-backend/ORDERS_CONTRACT.md §6). These are what the realtime bell
+ * carries and what PostgREST rows convert into; the wire shape is turned
+ * into app models ONLY inside OrdersRepository, so it never leaks into Room
  * or the UI.
  */
 
@@ -68,9 +68,6 @@ data class WireCatalog(
     val tables: List<WireTable> = emptyList(),
 )
 
-@Serializable
-data class WireRestaurant(val name: String = "", val code: String = "")
-
 // ---------------- live orders ----------------
 
 @Serializable
@@ -102,44 +99,6 @@ data class WireOrder(
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val billedAt: String? = null,
-)
-
-@Serializable
-data class WireEventStatus(
-    val eventId: String = "",
-    val status: String = "pending",
-    val rejectReason: String? = null,
-)
-
-/**
- * The single reply envelope: `mobile-orders` spreads each view's payload at
- * the top level next to ok/reason/permissions, so one optional-field DTO
- * covers every view and action.
- */
-@Serializable
-data class MobileOrdersReply(
-    val ok: Boolean = false,
-    val reason: String? = null,
-    val permissions: PermissionMap? = null,
-    // bootstrap / catalog / orders
-    val restaurant: WireRestaurant? = null,
-    val roomId: String? = null,
-    val posOnline: Boolean? = null,
-    val catalogVersion: Long? = null,
-    val ordersSeq: Long? = null,
-    val orderingEnabled: Boolean? = null,
-    val catalog: WireCatalog? = null,
-    val customers: List<WireCustomer>? = null,
-    val orders: List<WireOrder>? = null,
-    val unchanged: Boolean? = null,
-    // order view
-    val order: WireOrder? = null,
-    // submit_event
-    val eventId: String? = null,
-    val status: String? = null,
-    val rejectReason: String? = null,
-    // event_status
-    val events: List<WireEventStatus>? = null,
 )
 
 // ---------------- app-facing models ----------------
@@ -228,11 +187,31 @@ enum class OrdersGate {
     DeviceLimit,
 }
 
+/**
+ * Whether the counter is alive — THREE states, not two.
+ *
+ * The missing third state is what made the reported bug so bad. When the
+ * phone could not check, it reported that as [Offline]: the waiter was told
+ * the owner's till was dead when the truth was that the phone could not ask.
+ * "I don't know" is a different fact from "it has stopped", it points at a
+ * different machine, and the waiter needs to be told which one it is.
+ */
+enum class PosStatus {
+    /** We checked. The counter is alive. */
+    Online,
+
+    /** We checked. The counter has genuinely stopped. */
+    Offline,
+
+    /** We could not check — no connection, the request failed, or never yet. */
+    Unknown,
+}
+
 data class OrdersUiState(
     val data: OrdersData? = null,
     val gate: OrdersGate? = null,
-    /** Live "counter online" — presence-fed, server flag as fallback. */
-    val posOnline: Boolean = false,
+    /** The counter's liveness as far as this phone honestly knows (§4.3). */
+    val posStatus: PosStatus = PosStatus.Unknown,
     val refreshing: Boolean = false,
     /** Set only when there is nothing to render at all. */
     val error: String? = null,

@@ -71,7 +71,8 @@ class OrdersRealtime @Inject constructor(
     private var holders = 0
     private var runJob: Job? = null
     private var fallbackJob: Job? = null
-    private var badgeJob: Job? = null
+    private var statusJob: Job? = null
+    private var networkJob: Job? = null
 
     private val _socketUp = MutableStateFlow(false)
     val socketUp: StateFlow<Boolean> = _socketUp.asStateFlow()
@@ -163,32 +164,89 @@ class OrdersRealtime @Inject constructor(
             }
         }
 
-        // "Counter online" decays with time, so something has to re-evaluate
-        // it. This costs nothing — it is pure arithmetic on numbers we
-        // already hold, no network — and it is the difference between a
-        // waiter being warned that the counter is down and a waiter building
-        // a whole order before Send fails.
-        badgeJob?.cancel()
-        badgeJob = scope.launch {
+        // §4.4 — THE COUNTER'S STATUS, EVENT-DRIVEN, NO SCHEDULES.
+        //
+        // There is no tick here. A successful check is trusted for five
+        // minutes; this coroutine sleeps for exactly however long is left of
+        // that, checks ONCE, and sleeps again. The wait is anchored to the
+        // last real answer, not to a clock, so a bell — which renews our
+        // knowledge for free — pushes the next check out without any work.
+        //
+        // It exists only while an Orders surface is on screen. Release the
+        // last holder and it is cancelled: a phone with the tab closed makes
+        // no requests about the counter at all, ever.
+        statusJob?.cancel()
+        statusJob = scope.launch {
+            var failures = 0
             while (isActive) {
-                delay(BADGE_TICK_MS)
-                repo.tickPosOnline()
+                val due = repo.msUntilStatusCheckDue()
+                if (due > 0) {
+                    delay(due)
+                    continue
+                }
+                // A revoked staff member throws out of here. That is handled
+                // elsewhere (the app signs them out); this loop must not be
+                // the thing that dies of it, or the phone silently stops
+                // asking about the counter for the rest of the session.
+                val ok = try {
+                    repo.checkCounterStatus(minGapMs = 0)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "[RT] counter status check failed: ${e.message}")
+                    false
+                }
+                if (ok) {
+                    failures = 0
+                } else {
+                    // Could not reach Magic Bill. Back off rather than
+                    // hammer: the screen now says so honestly, and the
+                    // connectivity-restored trigger will beat this to it in
+                    // the common case.
+                    failures++
+                    delay(retryDelayMs(failures))
+                }
+            }
+        }
+
+        // Connectivity coming back is a real event, so it is a trigger — and
+        // it is what lets a phone taken off airplane mode recover on its own
+        // with no user action and no app restart.
+        networkJob?.cancel()
+        networkJob = scope.launch {
+            var wasOnline = network.online.value
+            network.online.collect { up ->
+                if (up && !wasOnline) repo.onConnectivityRestored()
+                wasOnline = up
             }
         }
     }
+
+    /** 30s, 1m, 2m, 4m, then capped at the trust window itself. */
+    private fun retryDelayMs(failures: Int): Long =
+        (RETRY_BASE_MS shl (failures - 1).coerceIn(0, 4)).coerceAtMost(RETRY_MAX_MS)
 
     private fun stop() {
         Log.i(TAG, "[RT] stop")
         runJob?.cancel(); runJob = null
         fallbackJob?.cancel(); fallbackJob = null
-        badgeJob?.cancel(); badgeJob = null
+        statusJob?.cancel(); statusJob = null
+        networkJob?.cancel(); networkJob = null
         markDown()
     }
 
+    /**
+     * The socket is down. That is all this means.
+     *
+     * It used to fire a counter-status re-check as well, and a socket that
+     * keeps failing calls it once per retry — which is how a phone log ended
+     * up with twenty "presence-recheck failed" lines in a row, each one
+     * spending allowance the device did not have. A dropped socket tells us
+     * nothing about the counter; there is nothing to go and ask.
+     */
     private fun markDown() {
         _socketUp.value = false
         synchronized(present) { present.clear() }
-        repo.setPresencePosOnline(null)
     }
 
     // ---------------- channel plumbing ----------------
@@ -265,7 +323,6 @@ class OrdersRealtime @Inject constructor(
                     if (!up && wasUp) {
                         Log.i(TAG, "[RT] channel down")
                         synchronized(present) { present.clear() }
-                        repo.setPresencePosOnline(null)
                     }
                     wasUp = up
                 }
@@ -303,14 +360,24 @@ class OrdersRealtime @Inject constructor(
         put("at", Instant.now().toString())
     }
 
+    /**
+     * Presence changed in the room. Presence is only ever a TRIGGER TO GO AND
+     * ASK — never the answer. A process that is killed does not send a leave,
+     * so a stale `pos:` entry will sit there asserting a counter that is not
+     * running; that is exactly how a phone claimed "Counter online" for four
+     * minutes after the till had been killed.
+     *
+     * We only react when the COUNTER itself comes or goes. Phones joining and
+     * leaving say nothing about the till, and reacting to them would turn a
+     * busy restaurant into a source of pointless reads.
+     */
     private fun onPresence(action: PresenceAction) {
-        val posUp: Boolean
+        val counterChanged = (action.joins.keys + action.leaves.keys).any { it.startsWith("pos:") }
         synchronized(present) {
             action.leaves.keys.forEach { present.remove(it) }
             present.addAll(action.joins.keys)
-            posUp = present.any { it.startsWith("pos:") }
         }
-        repo.setPresencePosOnline(posUp)
+        if (counterChanged) repo.onCounterPresenceChanged()
     }
 
     companion object {
@@ -327,10 +394,11 @@ class OrdersRealtime @Inject constructor(
         private const val FALLBACK_TICK_MS = 45_000L
 
         /**
-         * How often the counter badge is re-evaluated from data already in
-         * memory. No network. 10s keeps the badge within 10 seconds of the
-         * server's own 150-second verdict.
+         * Backoff for a counter-status check that could not reach Magic Bill.
+         * This is failure recovery, not a schedule: one attempt succeeds and
+         * the loop goes back to sleeping out the five-minute trust window.
          */
-        private const val BADGE_TICK_MS = 10_000L
+        private const val RETRY_BASE_MS = 30_000L
+        private const val RETRY_MAX_MS = 5 * 60_000L
     }
 }

@@ -48,6 +48,7 @@ import com.magicbill.app.core.formatINR
 import com.magicbill.app.data.orders.CreditCustomer
 import com.magicbill.app.data.orders.LiveOrder
 import com.magicbill.app.data.orders.OrderLine
+import com.magicbill.app.data.orders.PosStatus
 import com.magicbill.app.ui.components.GlowBackground
 import com.magicbill.app.ui.components.ListRow
 import com.magicbill.app.ui.components.MBBottomSheet
@@ -107,7 +108,9 @@ fun OrderDetailScreen(
     var cancelDialog by remember { mutableStateOf(false) }
 
     val order = ui.order
-    val canAct = online && ordersState.posOnline && !ui.busy
+    // Same rule as the builder (§4.3): only a counter we KNOW is down stops
+    // an action. "We could not check" is not a reason to refuse a waiter.
+    val canAct = online && ordersState.posStatus != PosStatus.Offline && !ui.busy
 
     Box(Modifier.fillMaxSize()) {
         GlowBackground(Modifier.fillMaxSize()) {
@@ -122,7 +125,7 @@ fun OrderDetailScreen(
                     subtitle = order?.let { detailSubtitle(it) },
                     onBack = onBack,
                     trailing = {
-                        StatusChip(online = online, posOnline = ordersState.posOnline, gate = ordersState.gate)
+                        StatusChip(online = online, posStatus = ordersState.posStatus, gate = ordersState.gate)
                     },
                 )
 

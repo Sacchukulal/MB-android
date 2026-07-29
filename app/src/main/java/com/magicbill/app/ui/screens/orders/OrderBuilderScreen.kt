@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magicbill.app.core.formatINR
 import com.magicbill.app.data.orders.MenuItem
 import com.magicbill.app.data.orders.OrderLine
+import com.magicbill.app.data.orders.PosStatus
 import com.magicbill.app.ui.components.GlowBackground
 import com.magicbill.app.ui.components.MBBottomSheet
 import com.magicbill.app.ui.components.MBButton
@@ -119,11 +120,16 @@ fun OrderBuilderScreen(
         .filter { selectedCategory == null || it.categoryLocalId == selectedCategory.localId }
         .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
 
-    val posOnline = ordersState.posOnline
-    val canSend = draft.isNotEmpty() && online && posOnline && sendState !is SendState.Sending
+    // §4.3 — a waiter is stopped only by something we actually KNOW. When we
+    // could not check, let them try: the server decides in about a third of a
+    // second and refuses with clear wording if the counter really is down.
+    // Blocking on a status we are unsure of refuses real orders for nothing.
+    val posStatus = ordersState.posStatus
+    val counterDown = posStatus == PosStatus.Offline
+    val canSend = draft.isNotEmpty() && online && !counterDown && sendState !is SendState.Sending
     val sendBlockedReason = when {
         !online -> "No internet"
-        !posOnline -> "Counter is offline — ask at the billing desk"
+        counterDown -> "Counter is offline — ask at the billing desk"
         else -> null
     }
 
@@ -135,7 +141,7 @@ fun OrderBuilderScreen(
                     subtitle = if (existing != null) "Add items" else "New order",
                     onBack = onBack,
                     trailing = {
-                        StatusChip(online = online, posOnline = posOnline, gate = ordersState.gate)
+                        StatusChip(online = online, posStatus = posStatus, gate = ordersState.gate)
                     },
                 )
                 MBTextField(

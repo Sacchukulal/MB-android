@@ -49,6 +49,10 @@ class SecurePrefs @Inject constructor(
         remove(OWNER_SESSION)
         remove(STAFF_SESSION)
         remove(SELECTED_LICENSE)
+        // The ordering credential belongs to the session that was just
+        // ended. Leaving the claim behind would tell the next sign-in it is
+        // already enrolled when it holds nothing.
+        remove(ORDERS_ENROLLED_SCOPE)
     }
 
     /**
@@ -66,6 +70,15 @@ class SecurePrefs @Inject constructor(
     companion object Keys {
         const val OWNER_SESSION = "owner_session"
         const val INSTALL_ID = "orders_install_id"
+
+        /**
+         * Which restaurant this device's live-ordering credential was minted
+         * for. On disk, next to the install id, because the question it
+         * answers — "have I already paid for a credential?" — has to outlive
+         * the process that asked it. Holding it in memory instead is what
+         * made every app open buy a new one.
+         */
+        const val ORDERS_ENROLLED_SCOPE = "orders_enrolled_scope"
         const val STAFF_SESSION = "staff_session"
         const val SELECTED_LICENSE = "selected_license"
         const val REMEMBERED_STAFF_CODE = "remembered_staff_code"
