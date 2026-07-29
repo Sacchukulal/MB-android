@@ -216,6 +216,22 @@ class OrdersRealtime @Inject constructor(
             launch {
                 presenceChannel.presenceChangeFlow().collect { action -> onPresence(action) }
             }
+            // Presence is announced from the PRESENCE channel's own status, not
+            // the live channel's. They subscribe independently, and tracking on
+            // a channel that has not finished subscribing is silently dropped —
+            // which is exactly how the counter ended up reading "0 phones"
+            // while a phone sat on the Orders tab.
+            launch {
+                var wasTracking = false
+                presenceChannel.status.collect { st ->
+                    val up = st == RealtimeChannel.Status.SUBSCRIBED
+                    if (up && !wasTracking) {
+                        runCatching { presenceChannel.track(presencePayload()) }
+                            .onFailure { Log.w(TAG, "[RT] presence track failed: ${it.message}") }
+                    }
+                    wasTracking = up
+                }
+            }
             launch {
                 var wasUp = false
                 liveChannel.status.collect { st ->
@@ -223,7 +239,6 @@ class OrdersRealtime @Inject constructor(
                     _socketUp.value = up
                     if (up && !wasUp) {
                         Log.i(TAG, "[RT] channel up")
-                        runCatching { presenceChannel.track(presencePayload()) }
                         // A RECONNECT DOES NOT FETCH BY ITSELF. We ask for
                         // the open set once here because we may genuinely
                         // have missed bells while away — that is a decision
@@ -242,8 +257,8 @@ class OrdersRealtime @Inject constructor(
             }
 
             withTimeoutOrNull(SUBSCRIBE_TIMEOUT_MS) {
-                liveChannel.subscribe(blockUntilSubscribed = true)
                 presenceChannel.subscribe(blockUntilSubscribed = true)
+                liveChannel.subscribe(blockUntilSubscribed = true)
             } ?: throw IllegalStateException("subscribe timeout")
 
             awaitCancellation()
