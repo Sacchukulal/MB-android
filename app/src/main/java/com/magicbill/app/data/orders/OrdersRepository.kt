@@ -1,5 +1,6 @@
 package com.magicbill.app.data.orders
 
+import android.os.SystemClock
 import android.util.Log
 import com.magicbill.app.core.MBErrors
 import com.magicbill.app.core.PermissionMap
@@ -83,12 +84,23 @@ class OrdersRepository @Inject constructor(
     private var lastOrdersSeq = 0L
     private var lastCatalogVersion = -1L
 
-    /** Presence verdict from the realtime channel; null = no verdict yet. */
-    private var presencePosOnline: Boolean? = null
-
-    /** licenses.pos_last_seen_at freshness from the last tenant_info read. */
-    private var serverPosOnline = false
-    private var serverPosOnlineAt = 0L
+    /**
+     * The counter's liveness, held as an AGE plus the moment we learnt it.
+     *
+     * `posSeenAgeMs` is how stale the counter was when the server told us;
+     * `posSeenLearntAt` is this device's own elapsed-time reading at that
+     * moment. Adding the two gives the counter's current staleness with no
+     * further reads, no polling, and no dependence on the two machines'
+     * clocks agreeing.
+     *
+     * It is deliberately NOT a boolean. A cached "online" cannot decay, and
+     * that is exactly what went wrong: the counter was killed, no presence
+     * leave ever arrived, and the phone showed "Counter online" for four
+     * minutes after the server had stopped accepting orders.
+     */
+    private var posSeenAgeMs: Long? = null
+    private var posSeenLearntAt = 0L
+    private var posLiveWindowMs = 150_000L
 
     // ---------------- caller identity ----------------
 
@@ -123,8 +135,9 @@ class OrdersRepository @Inject constructor(
             }
         }
 
-        serverPosOnline = info.posOnline
-        serverPosOnlineAt = System.currentTimeMillis()
+        posLiveWindowMs = info.posLiveWindowSeconds * 1000
+        posSeenAgeMs = info.posSecondsSinceSeen?.times(1000)
+        posSeenLearntAt = SystemClock.elapsedRealtime()
         _roomId.value = info.roomId
 
         val gate = when (info.gate) {
@@ -194,7 +207,8 @@ class OrdersRepository @Inject constructor(
                 _state.value = OrdersUiState(refreshing = true)
                 lastOrdersSeq = 0L
                 lastCatalogVersion = -1L
-                presencePosOnline = null
+                posSeenAgeMs = null
+                posSeenLearntAt = 0L
                 _roomId.value = null
             }
             loadedScope = c.scopeKey
@@ -355,6 +369,10 @@ class OrdersRepository @Inject constructor(
         scope.launch {
             runCatching {
                 val c = caller() ?: return@runCatching
+                // Whatever this bell says, only the counter could have sent
+                // it, so it is proof the counter was alive a moment ago.
+                noteCounterAlive()
+                _state.value = _state.value.copy(posOnline = effectivePosOnline())
                 when (bell.kind) {
                     "order" -> {
                         // The counter's ack rides on the same message as the
@@ -404,34 +422,63 @@ class OrdersRepository @Inject constructor(
         emitFromLocal(c)
     }
 
-    /** Presence verdict from OrdersRealtime (null when the socket is down). */
+    /**
+     * Presence changed on the realtime channel (null when the socket is
+     * down). Presence is now only ever a TRIGGER TO GO AND ASK — it is never
+     * the answer. Treating it as the answer is what let the phone claim
+     * "Counter online" for four minutes after the counter had been killed:
+     * a process that dies does not send a presence leave, so the stale entry
+     * sat there asserting a counter that was not there.
+     */
     fun setPresencePosOnline(online: Boolean?) {
-        val was = presencePosOnline
-        presencePosOnline = online
-        _state.value = _state.value.copy(posOnline = effectivePosOnline())
-        // Presence says the counter left the room. That may only mean its
-        // socket dropped while it is still alive, so ask the server rather
-        // than sitting on a possibly stale flag — ONE unmetered read.
-        if (online != true && was != online) {
-            scope.launch {
-                runCatching { readTenantInfo() }
-                    .onFailure { logFailure("presence-recheck", it) }
-                _state.value = _state.value.copy(posOnline = effectivePosOnline())
-            }
+        scope.launch {
+            runCatching { readTenantInfo() }
+                .onFailure { logFailure("presence-recheck", it) }
+            _state.value = _state.value.copy(posOnline = effectivePosOnline())
         }
     }
 
     /**
-     * Is the counter up? The server's flag is the FLOOR, never the ceiling:
-     * the server accepts or rejects an intent purely on its own
-     * pos_last_seen_at window, so refusing a waiter while the server would
-     * have taken the order happily is always wrong. Presence may only ever
-     * say "yes" faster, never veto a fresh server "yes".
+     * Is the counter up? Computed exactly the way the server computes it, so
+     * the badge and the server can never disagree: the counter's staleness
+     * when we last asked, plus however long ago that was, against the
+     * server's own window.
+     *
+     * Getting this wrong in either direction is a real failure. Saying
+     * "offline" while the server would still accept refuses a waiter for no
+     * reason; saying "online" after the server has given up lets a waiter
+     * build a whole order and only discover it when Send fails.
      */
     private fun effectivePosOnline(): Boolean {
-        if (presencePosOnline == true) return true
-        val fresh = System.currentTimeMillis() - serverPosOnlineAt < SERVER_FLAG_TTL_MS
-        return serverPosOnline && fresh
+        val age = posSeenAgeMs ?: return false
+        val sinceWeAsked = SystemClock.elapsedRealtime() - posSeenLearntAt
+        return age + sinceWeAsked < posLiveWindowMs
+    }
+
+    /**
+     * A bell is proof the counter was alive when it wrote. Order truth and
+     * catalog bumps are only ever authored by the counter, so receiving one
+     * resets the staleness clock without a read.
+     */
+    private fun noteCounterAlive() {
+        posSeenAgeMs = 0
+        posSeenLearntAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Re-evaluate the counter badge from what we already know. Costs
+     * nothing — no network, no database — and exists because the badge
+     * decays with time: when a counter dies there is no read, no bell and
+     * no presence event to trigger a recalculation, so without a tick the
+     * screen would keep showing whatever it last decided. That is exactly
+     * how a killed counter went on reading "Counter online" for four
+     * minutes. Driven by OrdersRealtime while an Orders surface is visible.
+     */
+    fun tickPosOnline() {
+        val now = effectivePosOnline()
+        if (_state.value.posOnline != now) {
+            _state.value = _state.value.copy(posOnline = now)
+        }
     }
 
     /**
@@ -758,14 +805,6 @@ class OrdersRepository @Inject constructor(
     companion object {
         private const val TAG = "MB/Orders"
         private const val EVENT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
-
-        /**
-         * How long the server's posOnline flag stays trustworthy on the
-         * phone. The server's own window is 150s (mb_pos_live_window), so 60s
-         * keeps the badge honest — it can go stale-negative but never
-         * stale-positive past the point where the server would refuse.
-         */
-        private const val SERVER_FLAG_TTL_MS = 60_000L
 
         /** Friendly copy for every machine reason in the contract. */
         fun reasonCopy(reason: String?): String = when (reason) {

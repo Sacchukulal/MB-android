@@ -71,6 +71,7 @@ class OrdersRealtime @Inject constructor(
     private var holders = 0
     private var runJob: Job? = null
     private var fallbackJob: Job? = null
+    private var badgeJob: Job? = null
 
     private val _socketUp = MutableStateFlow(false)
     val socketUp: StateFlow<Boolean> = _socketUp.asStateFlow()
@@ -161,12 +162,26 @@ class OrdersRealtime @Inject constructor(
                 }.onFailure { Log.w(TAG, "[RT] fallback read failed: ${it.message}") }
             }
         }
+
+        // "Counter online" decays with time, so something has to re-evaluate
+        // it. This costs nothing — it is pure arithmetic on numbers we
+        // already hold, no network — and it is the difference between a
+        // waiter being warned that the counter is down and a waiter building
+        // a whole order before Send fails.
+        badgeJob?.cancel()
+        badgeJob = scope.launch {
+            while (isActive) {
+                delay(BADGE_TICK_MS)
+                repo.tickPosOnline()
+            }
+        }
     }
 
     private fun stop() {
         Log.i(TAG, "[RT] stop")
         runJob?.cancel(); runJob = null
         fallbackJob?.cancel(); fallbackJob = null
+        badgeJob?.cancel(); badgeJob = null
         markDown()
     }
 
@@ -310,5 +325,12 @@ class OrdersRealtime @Inject constructor(
         /** 5.2 — the fallback arms only after this much continuous downtime. */
         private const val FALLBACK_ARM_AFTER_MS = 30_000L
         private const val FALLBACK_TICK_MS = 45_000L
+
+        /**
+         * How often the counter badge is re-evaluated from data already in
+         * memory. No network. 10s keeps the badge within 10 seconds of the
+         * server's own 150-second verdict.
+         */
+        private const val BADGE_TICK_MS = 10_000L
     }
 }

@@ -39,6 +39,14 @@ data class WireTenantInfo(
     val gate: String = "",
     val permissions: PermissionMap = emptyMap(),
     @SerialName("actor_name") val actorName: String = "",
+    /**
+     * How long ago the counter last proved it was alive, as the SERVER sees
+     * it. This is an AGE rather than a flag on purpose: a cached `true` can
+     * never decay, an age can. Null means it has never checked in.
+     */
+    @SerialName("pos_seconds_since_seen") val posSecondsSinceSeen: Long? = null,
+    /** The window the server itself applies, so we never hard-code it. */
+    @SerialName("pos_live_window_seconds") val posLiveWindowSeconds: Long = 150,
 )
 
 // ---------------- catalog mirrors ----------------
