@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,12 +67,26 @@ fun UpdateSheet(
                 MBBadge("Free update", MBBadgeStatus.Active)
             }
             Spacer(Modifier.height(14.dp))
-            Text(
-                info.release_notes?.takeIf { it.isNotBlank() }
-                    ?: "Bug fixes and improvements.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // The notes come from a file on the release, so their length is
+            // not under this screen's control. Left unbounded, a long note
+            // pushes "Update now" off the bottom of the sheet and there is no
+            // way to install at all — which is exactly what happened with
+            // v2.4.4, whose notes ran to two thousand characters. Cap the
+            // height and let the text scroll inside it: the buttons are then
+            // reachable no matter what anyone writes.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 200.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    info.release_notes?.takeIf { it.isNotBlank() }
+                        ?: "Bug fixes and improvements.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(20.dp))
 
             if (state.downloading) {

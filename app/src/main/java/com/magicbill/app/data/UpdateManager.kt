@@ -41,6 +41,12 @@ data class UpdateUiState(
 )
 
 /**
+ * `release_notes` is shown verbatim on the update sheet, so it must be ONE OR
+ * TWO PLAIN SENTENCES — no Markdown (nothing renders it, so `**bold**` shows
+ * up as asterisks) and no changelog. The full story belongs in the GitHub
+ * release body, which is read on a web page. v2.4.4 shipped two thousand
+ * characters here and buried the Install button.
+ *
  * Direct-APK auto-update. Every GitHub release ships `version.json`
  * ({version, apk_url, release_notes}); `releases/latest/download/version.json`
  * always points at the newest. Checks on app open + manually from Account.
