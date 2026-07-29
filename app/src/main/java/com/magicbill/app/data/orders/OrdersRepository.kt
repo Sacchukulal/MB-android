@@ -102,6 +102,10 @@ class OrdersRepository @Inject constructor(
     private var posSeenLearntAt = 0L
     private var posLiveWindowMs = 150_000L
 
+    /** Guards against stacking liveness re-checks on a slow connection. */
+    @Volatile
+    private var recheckInFlight = false
+
     // ---------------- caller identity ----------------
 
     private data class Caller(val scopeKey: String, val restaurantName: String)
@@ -479,6 +483,34 @@ class OrdersRepository @Inject constructor(
         if (_state.value.posOnline != now) {
             _state.value = _state.value.copy(posOnline = now)
         }
+
+        // About to run out of road: go and ask before declaring the counter
+        // dead. Without this the badge decays to "offline" on a counter that
+        // is working perfectly, simply because nothing happened for a couple
+        // of minutes — no bell, no presence change, nothing to refresh what
+        // we know. Refusing a waiter the server would have served is just as
+        // wrong as inviting an order the server will reject.
+        //
+        // This is a PostgREST read, not an Edge Function, so it is unmetered;
+        // and it only ever fires when our knowledge is genuinely about to go
+        // stale, never while orders are flowing.
+        val age = posSeenAgeMs ?: return
+        val projected = age + (SystemClock.elapsedRealtime() - posSeenLearntAt)
+        if (projected < posLiveWindowMs - RECHECK_HEADROOM_MS) return
+        if (recheckInFlight) return
+        recheckInFlight = true
+        scope.launch {
+            try {
+                readTenantInfo()
+                _state.value = _state.value.copy(posOnline = effectivePosOnline())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logFailure("liveness recheck", e)
+            } finally {
+                recheckInFlight = false
+            }
+        }
     }
 
     /**
@@ -805,6 +837,14 @@ class OrdersRepository @Inject constructor(
     companion object {
         private const val TAG = "MB/Orders"
         private const val EVENT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
+
+        /**
+         * How close to the liveness window we let our knowledge get before
+         * re-reading rather than assuming the counter has died. 30s gives a
+         * slow connection several attempts before the badge would have to
+         * flip, so a working counter is never declared dead by accident.
+         */
+        private const val RECHECK_HEADROOM_MS = 30_000L
 
         /** Friendly copy for every machine reason in the contract. */
         fun reasonCopy(reason: String?): String = when (reason) {
