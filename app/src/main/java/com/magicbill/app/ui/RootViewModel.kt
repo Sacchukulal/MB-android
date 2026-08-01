@@ -8,6 +8,7 @@ import com.magicbill.app.data.MBSession
 import com.magicbill.app.data.ThemeController
 import com.magicbill.app.data.UpdateManager
 import com.magicbill.app.data.UpdateUiState
+import com.magicbill.app.data.orders.OrdersRealtime
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +24,13 @@ class RootViewModel @Inject constructor(
     private val theme: ThemeController,
     private val account: AccountRepository,
     val updates: UpdateManager,
+    /**
+     * PART C — the shells declare whether this session takes orders, which
+     * is what decides whether the presence line is held for the whole
+     * foreground session. It lives here because both shells need it and
+     * neither owns the connection.
+     */
+    val ordersRealtime: OrdersRealtime,
 ) : ViewModel() {
 
     val session: StateFlow<MBSession> = auth.session

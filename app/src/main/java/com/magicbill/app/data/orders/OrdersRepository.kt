@@ -269,7 +269,15 @@ class OrdersRepository @Inject constructor(
                 // re-download — but arriving on this screen is trigger (a)/(b)
                 // for the counter's status, and this is where the old code
                 // showed a waiter whatever it had decided minutes ago.
-                checkCounterStatus(minGapMs = 0)
+                //
+                // PART C6: this used to be minGapMs = 0, so it was an RPC on
+                // EVERY arrival — and a waiter arrives here dozens of times
+                // an hour (every table tap comes straight back to this
+                // screen). Measured at 50 of them in ten minutes. The
+                // five-minute trust window already keeps the badge honest;
+                // re-asking within the same minute cannot tell us anything
+                // the last answer did not.
+                checkCounterStatus(minGapMs = ARRIVAL_MIN_GAP_MS)
                 return
             }
 
@@ -913,9 +921,6 @@ class OrdersRepository @Inject constructor(
         }
     }
 
-    /** 5.4 — the owner-facing usage readout. */
-    fun usage(): OrdersCloud.Usage = cloud.usage()
-
     // ---------------- helpers ----------------
 
     private suspend fun emitFromLocal(c: Caller) {
@@ -1027,6 +1032,14 @@ class OrdersRepository @Inject constructor(
          * minute. A flapping socket can never turn it into a poll.
          */
         private const val PRESENCE_MIN_GAP_MS = 60_000L
+
+        /**
+         * Arriving on an Orders surface is a trigger whose rate the waiter
+         * controls, not us — every table tap comes back through here. One
+         * check a minute is plenty against a five-minute trust window, and
+         * it is the difference between ~50 RPCs in ten minutes and ~8.
+         */
+        private const val ARRIVAL_MIN_GAP_MS = 60_000L
 
         /**
          * Used only until the first reading arrives; the real number always

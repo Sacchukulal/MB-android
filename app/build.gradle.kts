@@ -24,8 +24,8 @@ android {
         applicationId = "com.magicbill.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "2.4.4"
+        versionCode = 15
+        versionName = "2.4.5"
 
         buildConfigField("String", "SUPABASE_URL", "\"${secret("SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${secret("SUPABASE_ANON_KEY")}\"")
@@ -92,6 +92,7 @@ dependencies {
 
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.navigation.compose)
 
     implementation(libs.androidx.room.runtime)
