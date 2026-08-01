@@ -372,6 +372,25 @@ class OrdersRepository @Inject constructor(
     }
 
     /**
+     * Make the cached room id available WITHOUT a network call.
+     *
+     * PART C1 holds the presence line for the whole foreground session, but
+     * the line cannot join a room it does not know, and `roomId` used to be
+     * published only once the Orders tab had loaded. So a phone sitting on
+     * Home was invisible to the counter until a waiter opened Orders — which
+     * is the very flicker the change was meant to remove. Caught on hardware.
+     *
+     * Reads one row from Room. A phone that has never opened Orders has no
+     * cached room and legitimately cannot announce itself yet.
+     */
+    suspend fun primeRoomId() {
+        if (_roomId.value != null) return
+        val c = caller() ?: return
+        val room = dao.syncState(c.scopeKey)?.roomId?.takeIf { it.isNotEmpty() } ?: return
+        _roomId.value = room
+    }
+
+    /**
      * A full re-read of the open set. Used on tab open, pull-to-refresh, and
      * as the ONE catch-up read after a detected sequence gap — never on a
      * timer.

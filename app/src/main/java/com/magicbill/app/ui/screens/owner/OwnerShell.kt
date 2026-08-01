@@ -57,13 +57,10 @@ fun OwnerShell(rootViewModel: RootViewModel) {
     val navController = rememberNavController()
 
     // PART C1 — the presence line is held for the whole foreground session,
-    // not only while an Orders screen is showing. The owner always has
-    // ordering access, so this is unconditional here.
-    val realtime = rootViewModel.ordersRealtime
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        realtime.setOrderingAccess(true)
-        onDispose { realtime.setOrderingAccess(false) }
-    }
+    // not only while an Orders screen is showing. It is declared from the
+    // SESSION in RootViewModel, not from an effect here: a shell composable
+    // moving would otherwise dispose the old effect after the new one had
+    // already run, switching ordering access back off. Hardware caught that.
 
     CompositionLocalProvider(LocalPermissions provides AllPermissions) {
         NavHost(

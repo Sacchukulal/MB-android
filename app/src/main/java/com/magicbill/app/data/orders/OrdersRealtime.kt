@@ -165,6 +165,10 @@ class OrdersRealtime @Inject constructor(
             orderingAccess = enabled
         }
         if (enabled) {
+            // The presence line needs a room before it can join one, and
+            // `roomId` is otherwise only published once the Orders tab has
+            // loaded. This is a single read from Room, no network.
+            scope.launch { runCatching { repo.primeRoomId() } }
             if (foreground) startPresence()
         } else {
             stopPresenceNow()

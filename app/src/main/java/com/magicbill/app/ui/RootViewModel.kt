@@ -6,6 +6,8 @@ import com.magicbill.app.data.AccountRepository
 import com.magicbill.app.data.AuthRepository
 import com.magicbill.app.data.MBSession
 import com.magicbill.app.data.ThemeController
+import com.magicbill.app.core.PermissionKey
+import com.magicbill.app.core.has
 import com.magicbill.app.data.UpdateManager
 import com.magicbill.app.data.UpdateUiState
 import com.magicbill.app.data.orders.OrdersRealtime
@@ -45,6 +47,29 @@ class RootViewModel @Inject constructor(
     init {
         auth.bootstrap()
         updates.checkOnLaunch()
+
+        // PART C1 — who holds the presence line.
+        //
+        // This is deliberately driven from the SESSION and not from a
+        // DisposableEffect in the shells. It was written that way first and
+        // hardware caught it within a minute: when a shell composable moves,
+        // Compose runs the NEW effect before disposing the OLD one, so the
+        // sequence was set(true) → set(true) (ignored, already true) →
+        // set(false) from the stale dispose. The phone ended up with ordering
+        // access switched off and did not appear in the counter's room until
+        // an Orders screen forced it on. The log said it plainly:
+        // "presence line up" and then "presence line down" 220ms later.
+        //
+        // A session is not a composable. Neither is ordering access.
+        viewModelScope.launch {
+            session.map { s ->
+                when (s) {
+                    is MBSession.Owner -> true
+                    is MBSession.Staff -> s.staff.permissions.has(PermissionKey.TakeOrders)
+                    else -> false
+                }
+            }.distinctUntilChanged().collect { ordersRealtime.setOrderingAccess(it) }
+        }
         // Register this phone on the owner's row whenever an owner session
         // lands on a restaurant (login or app open) — best effort.
         viewModelScope.launch {

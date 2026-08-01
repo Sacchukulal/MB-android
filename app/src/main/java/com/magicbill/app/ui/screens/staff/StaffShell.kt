@@ -63,13 +63,8 @@ fun StaffShell(rootViewModel: RootViewModel) {
     // PART C1 — the presence line is held for the whole foreground session
     // for any session with ordering access, so the counter's phone count
     // stops flickering as a waiter moves between tabs. A staff member
-    // without take_orders holds nothing at all.
-    val canOrder = staff.staff.permissions.has(PermissionKey.TakeOrders)
-    val realtime = rootViewModel.ordersRealtime
-    androidx.compose.runtime.DisposableEffect(canOrder) {
-        realtime.setOrderingAccess(canOrder)
-        onDispose { realtime.setOrderingAccess(false) }
-    }
+    // without take_orders holds nothing at all. Declared from the SESSION in
+    // RootViewModel rather than from an effect here — see the note there.
 
     CompositionLocalProvider(LocalPermissions provides permissionSet) {
         NavHost(
