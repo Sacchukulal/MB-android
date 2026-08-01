@@ -31,3 +31,4 @@ build-log.txt
 *.log
 run-release-check.cmd
 release-log.txt
+compile-log.txt
