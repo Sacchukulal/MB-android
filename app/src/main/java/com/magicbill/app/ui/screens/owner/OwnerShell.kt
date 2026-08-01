@@ -41,6 +41,8 @@ import com.magicbill.app.ui.screens.bills.BillDetailScreen
 import com.magicbill.app.ui.screens.orders.OrderBuilderScreen
 import com.magicbill.app.ui.screens.orders.OrderDetailScreen
 import com.magicbill.app.ui.screens.orders.OrdersScreen
+import com.magicbill.app.ui.screens.profile.ProfileScreen
+import com.magicbill.app.ui.screens.profile.ProfileSession
 import com.magicbill.app.ui.theme.MBMotion
 import androidx.compose.runtime.CompositionLocalProvider
 
@@ -53,6 +55,15 @@ fun OwnerShell(rootViewModel: RootViewModel) {
     val session by rootViewModel.session.collectAsStateWithLifecycle()
     val owner = session as? MBSession.Owner ?: return
     val navController = rememberNavController()
+
+    // PART C1 — the presence line is held for the whole foreground session,
+    // not only while an Orders screen is showing. The owner always has
+    // ordering access, so this is unconditional here.
+    val realtime = rootViewModel.ordersRealtime
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        realtime.setOrderingAccess(true)
+        onDispose { realtime.setOrderingAccess(false) }
+    }
 
     CompositionLocalProvider(LocalPermissions provides AllPermissions) {
         NavHost(
@@ -160,7 +171,7 @@ private fun OwnerTabs(
                     onOpenOrder = onOpenOrder,
                     onNewOrder = onNewOrder,
                 )
-                else -> AccountScreen(rootViewModel, owner)
+                else -> ProfileScreen(rootViewModel, ProfileSession.Owner(owner))
             }
         }
         PillNavBar(

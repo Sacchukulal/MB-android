@@ -44,6 +44,8 @@ import com.magicbill.app.ui.screens.orders.OrderBuilderScreen
 import com.magicbill.app.ui.screens.orders.OrderDetailScreen
 import com.magicbill.app.ui.screens.orders.OrdersScreen
 import com.magicbill.app.ui.screens.owner.StaffManagerScreen
+import com.magicbill.app.ui.screens.profile.ProfileScreen
+import com.magicbill.app.ui.screens.profile.ProfileSession
 import com.magicbill.app.ui.theme.MBMotion
 
 /**
@@ -57,6 +59,17 @@ fun StaffShell(rootViewModel: RootViewModel) {
     val navController = rememberNavController()
 
     val permissionSet = staff.staff.permissions.filterValues { it }.keys
+
+    // PART C1 — the presence line is held for the whole foreground session
+    // for any session with ordering access, so the counter's phone count
+    // stops flickering as a waiter moves between tabs. A staff member
+    // without take_orders holds nothing at all.
+    val canOrder = staff.staff.permissions.has(PermissionKey.TakeOrders)
+    val realtime = rootViewModel.ordersRealtime
+    androidx.compose.runtime.DisposableEffect(canOrder) {
+        realtime.setOrderingAccess(canOrder)
+        onDispose { realtime.setOrderingAccess(false) }
+    }
 
     CompositionLocalProvider(LocalPermissions provides permissionSet) {
         NavHost(
@@ -122,6 +135,7 @@ private fun StaffTabs(
     onNewOrder: (orderType: String, tableNumber: String, section: String) -> Unit,
 ) {
     val perms = staffSession.staff.permissions
+    val updateDot = rootViewModel.updateDotVisible.collectAsStateWithLifecycle().value
     val hasAnyView = perms.has(PermissionKey.ViewDashboard) ||
         perms.has(PermissionKey.ViewReports) || perms.has(PermissionKey.TakeOrders)
     val tabs = buildList {
@@ -139,7 +153,18 @@ private fun StaffTabs(
         if (perms.has(PermissionKey.TakeOrders)) {
             add(StaffTab(PillNavItem("Orders", Icons.Outlined.RestaurantMenu, Icons.Filled.RestaurantMenu), "orders"))
         }
-        add(StaffTab(PillNavItem("Profile", Icons.Outlined.Person, Icons.Filled.Person), "profile"))
+        // A4 — the update dot, mirroring OwnerShell. Without it a staff phone
+        // that dismissed the update sheet had no indication an update existed
+        // at all, and staff rarely leave the Orders tab to find out.
+        add(
+            StaffTab(
+                PillNavItem(
+                    "Profile", Icons.Outlined.Person, Icons.Filled.Person,
+                    showDot = updateDot,
+                ),
+                "profile",
+            ),
+        )
     }
 
     var tabIndex by rememberSaveable(tabs.size) { mutableIntStateOf(0) }
@@ -177,7 +202,7 @@ private fun StaffTabs(
                     onOpenOrder = onOpenOrder,
                     onNewOrder = onNewOrder,
                 )
-                else -> StaffProfileScreen(rootViewModel, staffSession)
+                else -> ProfileScreen(rootViewModel, ProfileSession.Staff(staffSession))
             }
         }
         // Staff with only a profile tab get the friendly empty state inside

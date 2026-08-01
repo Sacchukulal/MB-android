@@ -118,26 +118,13 @@ class OrdersCloud @Inject constructor(
         prefs.putString(KEY_CALL_LOG, json.encodeToString(logSerializer, log))
     }
 
-    /** Plain-English usage readout for the staff profile screen (5.4). */
-    data class Usage(
-        val lastHour: Int,
-        val last24h: Int,
-        val last30Days: Int,
-        val hourlyCeiling: Int,
-        val monthlyCeiling: Int,
-    )
-
-    fun usage(): Usage {
-        val now = System.currentTimeMillis()
-        val log = callLog().filter { now - it < WINDOW_MS }
-        return Usage(
-            lastHour = log.count { now - it < HOUR_MS },
-            last24h = log.count { now - it < DAY_MS },
-            last30Days = log.size,
-            hourlyCeiling = perHour,
-            monthlyCeiling = per30Days,
-        )
-    }
+    // The "Cloud usage" readout that used to live on the staff profile screen
+    // was removed in 2.4.5: it was a number only an engineer could act on, in
+    // the one place a waiter looks for their own name and permissions, and it
+    // existed on the staff side only — the owner never saw it. The equivalent
+    // for the owner is the line under the status pill on the counter, which is
+    // the one that matters. The rolling call log below is UNCHANGED and still
+    // enforces the ceiling; only its display is gone.
 
     /**
      * May we make an Edge call? Checked BEFORE the request, because a call

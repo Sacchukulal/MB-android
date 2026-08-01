@@ -394,12 +394,6 @@ private fun RestaurantCodeHero(
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Staff sign in with this code and their personal PIN.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
