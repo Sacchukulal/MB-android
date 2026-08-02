@@ -24,15 +24,15 @@ android {
         applicationId = "com.magicbill.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.4.5"
+        versionCode = 16
+        versionName = "2.4.6"
 
         buildConfigField("String", "SUPABASE_URL", "\"${secret("SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${secret("SUPABASE_ANON_KEY")}\"")
     }
 
     signingConfigs {
-        // Release signing MUST use keys/magic-bill-release.keystore (alias "magicbill") —
+        // Release signing MUST use keys/magic-bill-release.keystore (alias "magicbill") --
         // the same cert as the published RN builds, or installed devices can't update in place.
         create("release") {
             val storePath = secret("MB_KEYSTORE_FILE")

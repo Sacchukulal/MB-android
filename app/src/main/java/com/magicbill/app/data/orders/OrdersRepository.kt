@@ -23,8 +23,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -79,6 +82,35 @@ class OrdersRepository @Inject constructor(
     /** Realtime room id. Opaque capability — never log it. */
     private val _roomId = MutableStateFlow<String?>(null)
     val roomId: StateFlow<String?> = _roomId.asStateFlow()
+
+    /**
+     * "The live channel is not delivering — rebuild it."
+     *
+     * WHY THIS EXISTS. A WebSocket can stop delivering without ever saying
+     * so: the status stays SUBSCRIBED, no error is raised, nothing throws,
+     * and the phone sits there deaf while the screen cheerfully reads
+     * "Counter online" — because the badge comes from ordinary reads, which
+     * still work perfectly.
+     *
+     * Until 2.4.5 this was masked by accident. The connection was refcounted
+     * by the Orders screens, so every table tap tore it down and rebuilt it;
+     * a dead channel could never survive more than a few seconds of
+     * navigation. Removing that churn was the whole point of PART C — and it
+     * removed the accidental self-healing along with the waste.
+     *
+     * So the healing is now deliberate, and it uses something we already
+     * fetch: `orders_seq`. The counter bumps it for every change it
+     * publishes. If a tenant_info read shows it has run ahead of the last
+     * bell we actually received, then bells are being sent and we are not
+     * hearing them — which is exactly the fault, detected without a single
+     * extra request.
+     */
+    private val _missedBells = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val missedBells: SharedFlow<Unit> = _missedBells.asSharedFlow()
+
+    /** Elapsed-time reading of the last rebuild, so a storm is impossible. */
+    @Volatile
+    private var lastRebuildAt = 0L
 
     private var loadedScope: String? = null
     private var lastOrdersSeq = 0L
@@ -189,6 +221,24 @@ class OrdersRepository @Inject constructor(
         )
         lastCheckFailed = false
         _roomId.value = info.roomId
+
+        // Has the counter published changes we never heard? Every read comes
+        // through here, so a pull-to-refresh repairs the CONNECTION as well
+        // as the data — which is what "a swipe down should clear any glitch"
+        // has to mean if the glitch is a socket that stopped talking.
+        if (lastOrdersSeq > 0 && info.ordersSeq > lastOrdersSeq) {
+            val behind = info.ordersSeq - lastOrdersSeq
+            val sinceRebuild = SystemClock.elapsedRealtime() - lastRebuildAt
+            if (sinceRebuild > REBUILD_MIN_GAP_MS) {
+                lastRebuildAt = SystemClock.elapsedRealtime()
+                Log.w(
+                    TAG,
+                    "[SYNC] $behind change(s) arrived that we never heard — " +
+                        "the live channel has gone deaf. Rebuilding it.",
+                )
+                _missedBells.tryEmit(Unit)
+            }
+        }
 
         val gate = when (info.gate) {
             "ordering-disabled" -> OrdersGate.OrderingDisabled
@@ -1059,6 +1109,16 @@ class OrdersRepository @Inject constructor(
          * it is the difference between ~50 RPCs in ten minutes and ~8.
          */
         private const val ARRIVAL_MIN_GAP_MS = 60_000L
+
+        /**
+         * A deaf live channel is repaired at most this often. Rebuilding is
+         * cheap but not free — it is a leave and a rejoin, which is exactly
+         * what PART C stopped doing on every navigation. One a minute is
+         * plenty to recover from a socket that died, and slow enough that a
+         * genuinely flapping connection cannot turn this into the churn it
+         * replaced.
+         */
+        private const val REBUILD_MIN_GAP_MS = 60_000L
 
         /**
          * Used only until the first reading arrives; the real number always

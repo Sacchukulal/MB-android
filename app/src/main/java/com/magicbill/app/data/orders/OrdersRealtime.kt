@@ -129,6 +129,13 @@ class OrdersRealtime @Inject constructor(
     private var fallbackJob: Job? = null
     private var statusJob: Job? = null
     private var networkJob: Job? = null
+    private var repairJob: Job? = null
+
+    /**
+     * Bumped every time a line is rebuilt, so a rebuild request that arrives
+     * while one is already in flight cannot stack.
+     */
+    private var liveGeneration = 0
 
     /**
      * A pending stop, and the token that makes it safe.
@@ -316,8 +323,10 @@ class OrdersRealtime @Inject constructor(
         }
         if (!foreground || !orderingAccess) return
         Log.i(TAG, "[RT] live line up")
+        liveGeneration++
         liveJob = scope.launch { runLine("live", isLive = true) { runLiveChannel(it) } }
         startSurfaceJobs()
+        startRepairJob()
     }
 
     @Synchronized
@@ -344,6 +353,7 @@ class OrdersRealtime @Inject constructor(
         if (liveJob == null) return
         Log.i(TAG, "[RT] live line down")
         liveJob?.cancel(); liveJob = null
+        repairJob?.cancel(); repairJob = null
         stopSurfaceJobs()
         _socketUp.value = false
     }
@@ -486,6 +496,63 @@ class OrdersRealtime @Inject constructor(
         fallbackJob?.cancel(); fallbackJob = null
         statusJob?.cancel(); statusJob = null
         networkJob?.cancel(); networkJob = null
+    }
+
+    /**
+     * DELIBERATE SELF-HEALING FOR A CHANNEL THAT WENT DEAF.
+     *
+     * A WebSocket can stop delivering without saying so: the status stays
+     * SUBSCRIBED, nothing throws, and the phone sits there silent while the
+     * screen still reads "Counter online" — because the badge comes from
+     * ordinary reads, which keep working.
+     *
+     * Before 2.4.5 this was hidden by accident: the connection was torn down
+     * and rebuilt on every table tap, so a dead channel never lasted. PART C
+     * removed that churn on purpose, and removed the accidental healing with
+     * it. This puts the healing back deliberately, driven by the repository
+     * noticing that `orders_seq` has run ahead of the last bell we heard.
+     *
+     * Observed on the owner's phone: the counter published a create and a
+     * settle, a service-role observer on the same topic received both, and
+     * the phone received neither — with no error anywhere.
+     */
+    private fun startRepairJob() {
+        repairJob?.cancel()
+        repairJob = scope.launch {
+            repo.missedBells.collect {
+                val gen = synchronized(this@OrdersRealtime) { liveGeneration }
+                Log.w(TAG, "[RT] rebuilding both lines — bells were being missed")
+                rebuildLines(gen)
+            }
+        }
+    }
+
+    /**
+     * Drop and rebuild BOTH lines without asking the socket how it is.
+     *
+     * Both, not just the order channel: when this fault was caught on the
+     * owner's phone the presence line was dead too — the counter had been
+     * reading "0 phones" while the phone sat on the Orders screen saying
+     * "Counter online". They share one socket, so when it dies quietly they
+     * both go with it, and neither says a word.
+     */
+    @Synchronized
+    private fun rebuildLines(expectedGeneration: Int) {
+        if (liveGeneration != expectedGeneration) return // already rebuilt since
+        if (liveJob == null) return                      // not held right now
+
+        liveJob?.cancel(); liveJob = null
+        _socketUp.value = false
+        stopSurfaceJobs()
+
+        // Presence is rebuilt only if this session is holding it at all.
+        if (presenceJob != null) {
+            presenceJob?.cancel(); presenceJob = null
+            synchronized(present) { present.clear() }
+        }
+
+        startLive()
+        if (foreground && orderingAccess) startPresence()
     }
 
     /** 30s, 1m, 2m, 4m, then capped at the trust window itself. */
