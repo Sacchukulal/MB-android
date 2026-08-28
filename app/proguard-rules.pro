@@ -1,8 +1,5 @@
-# Modern AndroidX / Kotlin libraries ship consumer ProGuard rules; only
-# project-specific keeps belong here.
-
-# kotlinx.serialization — keep serializers for our own @Serializable models.
--keepattributes *Annotation*, InnerClasses
+# kotlinx.serialization — keep the generated serializers and companions.
+-keepattributes *Annotation*, InnerClasses, Signature
 -keepclassmembers class com.magicbill.app.** {
     *** Companion;
 }
@@ -10,12 +7,12 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# Retrofit interfaces resolved via reflection on generic signatures.
--keepattributes Signature
-
-# Tink (via androidx.security-crypto) references compile-only ErrorProne
-# annotations that aren't on the runtime classpath.
+# security-crypto pulls Tink, which references error-prone annotations that are not on the classpath.
 -dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
 -dontwarn com.google.errorprone.annotations.CheckReturnValue
 -dontwarn com.google.errorprone.annotations.Immutable
 -dontwarn com.google.errorprone.annotations.RestrictedApi
+
+# BouncyCastle: only Argon2 is used; R8 strips the rest. It references JDK-only classes.
+-dontwarn org.bouncycastle.**
+-dontwarn javax.naming.**

@@ -24,16 +24,19 @@ android {
         applicationId = "com.magicbill.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "2.4.6"
+        // Must only ever go up: the phone compares codes to decide whether an update is newer.
+        versionCode = 17
+        versionName = "3.0.0"
 
-        buildConfigField("String", "SUPABASE_URL", "\"${secret("SUPABASE_URL")}\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${secret("SUPABASE_ANON_KEY")}\"")
+        // The cloud's public address and anon key. Public by design (RLS is the wall), but kept
+        // out of the source so the secret scanner has nothing to find in .kt.
+        buildConfigField("String", "CLOUD_URL", "\"${secret("SUPABASE_URL")}\"")
+        buildConfigField("String", "CLOUD_ANON_KEY", "\"${secret("SUPABASE_ANON_KEY")}\"")
     }
 
     signingConfigs {
-        // Release signing MUST use keys/magic-bill-release.keystore (alias "magicbill") --
-        // the same cert as the published RN builds, or installed devices can't update in place.
+        // Release signing MUST use keys/magic-bill-release.keystore (alias "magicbill") —
+        // the same cert as every published build, or installed phones cannot update in place.
         create("release") {
             val storePath = secret("MB_KEYSTORE_FILE")
             if (storePath.isNotEmpty()) {
@@ -47,8 +50,7 @@ android {
 
     buildTypes {
         debug {
-            // Sign debug builds with the release key too, so dev builds install
-            // in place over the published app instead of failing on cert mismatch.
+            // Signed with the release key too, so a dev build installs over the published app.
             if (secret("MB_KEYSTORE_FILE").isNotEmpty()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -72,13 +74,21 @@ android {
         compose = true
         buildConfig = true
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.isReturnDefaultValues = true
+    }
+
+    packaging {
+        resources.excludes += setOf("META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/LICENSE*")
+    }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.browser)
     implementation(libs.androidx.security.crypto)
 
     implementation(platform(libs.androidx.compose.bom))
@@ -99,6 +109,11 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
@@ -106,19 +121,13 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp)
-
-    implementation(platform(libs.supabase.bom))
-    implementation(libs.supabase.auth)
-    implementation(libs.supabase.postgrest)
-    implementation(libs.supabase.functions)
-    implementation(libs.supabase.realtime)
-    implementation(libs.ktor.client.okhttp)
-
-    implementation(libs.coil.compose)
-    implementation(libs.coil.network.okhttp)
     implementation(libs.zxing.core)
-    implementation(libs.vico.compose.m3)
+    implementation(libs.bouncycastle)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.room.runtime)
 }

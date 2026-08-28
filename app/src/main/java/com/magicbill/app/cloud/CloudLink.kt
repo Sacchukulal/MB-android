@@ -1,0 +1,265 @@
+package com.magicbill.app.cloud
+
+import com.magicbill.app.core.Answer
+import com.magicbill.app.core.Clock
+import com.magicbill.app.core.MbJson
+import com.magicbill.app.core.Sentences
+import com.magicbill.app.core.asObjectOrNull
+import com.magicbill.app.core.long
+import com.magicbill.app.core.obj
+import com.magicbill.app.core.parseJsonOrNull
+import com.magicbill.app.core.str
+import com.magicbill.app.core.strOrNull
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+
+/**
+ * The one HTTP client for the cloud (PHONE_API.md). Two auth endpoints, PostgREST RPC and
+ * REST, one refresh on a 401, and nothing else. Every call has a deadline from the client;
+ * every reply becomes an [Answer]. Nothing metered is called from here except `staff-login`.
+ */
+class CloudLink(
+    private val baseUrl: String,
+    private val anonKey: String,
+    private val client: OkHttpClient,
+    private val sessions: SessionStore,
+    private val clock: Clock = Clock.system,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) {
+    private val jsonType = "application/json; charset=utf-8".toMediaType()
+    private val refreshing = Mutex()
+
+    // ---- Sign in --------------------------------------------------------------------------
+
+    suspend fun passwordLogin(email: String, password: String): Answer<CloudSession> {
+        val body = buildJsonObject { put("email", email.trim()); put("password", password) }
+        val wire = send(anonRequest("$baseUrl/auth/v1/token?grant_type=password").post(body.toString().toRequestBody(jsonType)).build())
+        return when (wire) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+            is Wire.Http -> {
+                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
+                if (wire.code in 200..299 && o != null) {
+                    val s = sessionFrom(o, CloudSession.Kind.OWNER, email = o.obj("user")?.strOrNull("email") ?: email.trim())
+                    sessions.save(s)
+                    Answer.Ok(s)
+                } else {
+                    Answer.Refused(authSentence(o), o?.strOrNull("error_code"))
+                }
+            }
+        }
+    }
+
+    /** Once per install per person (the one metered call). */
+    suspend fun staffLogin(restaurantCode: String, staffCode: String, pin: String, machineId: String, machineName: String, appVersion: String): Answer<CloudSession> {
+        val body = buildJsonObject {
+            put("restaurant_code", restaurantCode.trim().uppercase())
+            put("staff_code", staffCode.trim().uppercase())
+            put("pin", pin)
+            put("machine", buildJsonObject { put("id", machineId); put("name", machineName) })
+            put("app_version", appVersion)
+        }
+        val wire = send(anonRequest("$baseUrl/functions/v1/staff-login").post(body.toString().toRequestBody(jsonType)).build())
+        return when (wire) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+            is Wire.Http -> {
+                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
+                when {
+                    wire.code == 200 && o != null -> {
+                        val sess = o.obj("session") ?: return Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+                        val r = o.obj("restaurant")
+                        val st = o.obj("staff")
+                        val s = sessionFrom(
+                            sess, CloudSession.Kind.STAFF,
+                            staff = StaffIdentity(r?.str("id") ?: "", r?.str("name") ?: "", r?.str("short_code") ?: "", st?.str("id") ?: "", st?.str("name") ?: ""),
+                            deviceId = o.strOrNull("device_id"),
+                        )
+                        sessions.save(s)
+                        Answer.Ok(s)
+                    }
+                    wire.code == 401 -> Answer.Refused("The restaurant code, staff code and PIN do not match.", "not_recognised")
+                    wire.code == 429 -> Answer.Refused(tooManySentence(wire.retryAfter), "too_many", wire.retryAfter)
+                    o != null && o.strOrNull("message") != null -> Answer.Refused(o.str("message"), o.strOrNull("code"))
+                    else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+                }
+            }
+        }
+    }
+
+    suspend fun signOut() {
+        val s = sessions.current()
+        sessions.clear()
+        if (s != null) {
+            // Best effort; the box is already empty, which is what matters.
+            send(anonRequest("$baseUrl/auth/v1/logout").header("Authorization", "Bearer ${s.accessToken}").post(ByteArray(0).toRequestBody(null)).build())
+        }
+    }
+
+    // ---- Talking to the cloud, signed in ---------------------------------------------------
+
+    /** `POST /rest/v1/rpc/<fn>`. */
+    suspend fun rpc(fn: String, body: JsonObject = JsonObject(emptyMap())): Answer<JsonElement> = authed { token ->
+        signed("$baseUrl/rest/v1/rpc/$fn", token).post(body.toString().toRequestBody(jsonType)).build()
+    }
+
+    /** `GET /rest/v1/<path>` — a select with PostgREST filters in the path. */
+    suspend fun select(path: String): Answer<JsonElement> = authed { token ->
+        signed("$baseUrl/rest/v1/$path", token).get().build()
+    }
+
+    /** `POST /rest/v1/<table>` — an insert; the row is not returned. */
+    suspend fun insert(table: String, row: JsonObject): Answer<JsonElement> = authed { token ->
+        signed("$baseUrl/rest/v1/$table", token).header("Prefer", "return=minimal").post(row.toString().toRequestBody(jsonType)).build()
+    }
+
+    /** Anonymous reads: plans, releases, permissions. */
+    suspend fun selectAnon(path: String): Answer<JsonElement> = when (val wire = send(anonRequest("$baseUrl/rest/v1/$path").get().build())) {
+        is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+        is Wire.Http -> fromRest(wire)
+    }
+
+    private suspend fun authed(build: (token: String) -> Request): Answer<JsonElement> {
+        val s = sessions.current() ?: return Answer.SignedOut(Sentences.NOT_SIGNED_IN)
+        var token = s.accessToken
+        if (s.expiresAtMs - clock.now() < 60_000) {
+            when (val r = refresh(s.accessToken)) {
+                is Answer.Ok -> token = r.value.accessToken
+                is Answer.SignedOut -> return r
+                else -> {} // try with what we have; the 401 path below refreshes again
+            }
+        }
+        val first = send(build(token))
+        if (first is Wire.Http && first.code == 401) {
+            return when (val r = refresh(token)) {
+                is Answer.Ok -> when (val second = send(build(r.value.accessToken))) {
+                    is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+                    is Wire.Http -> if (second.code == 401) Answer.SignedOut(Sentences.SIGN_IN_ENDED) else fromRest(second)
+                }
+                is Answer.SignedOut -> r
+                else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+            }
+        }
+        return when (first) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+            is Wire.Http -> fromRest(first)
+        }
+    }
+
+    /**
+     * One refresh at a time. A caller that arrives while another refresh is running waits and
+     * then uses the newer token. The session is cleared only when the server says the refresh
+     * token is dead.
+     */
+    suspend fun refresh(staleToken: String? = null): Answer<CloudSession> = refreshing.withLock {
+        val s = sessions.current() ?: return Answer.SignedOut(Sentences.NOT_SIGNED_IN)
+        if (staleToken != null && s.accessToken != staleToken) return Answer.Ok(s) // somebody already did
+        val body = buildJsonObject { put("refresh_token", s.refreshToken) }
+        when (val wire = send(anonRequest("$baseUrl/auth/v1/token?grant_type=refresh_token").post(body.toString().toRequestBody(jsonType)).build())) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+            is Wire.Http -> {
+                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
+                if (wire.code in 200..299 && o != null) {
+                    val fresh = sessionFrom(o, s.kind, email = s.email, staff = s.staff, deviceId = s.deviceId)
+                    sessions.save(fresh)
+                    Answer.Ok(fresh)
+                } else if (wire.code == 400 || wire.code == 401 || wire.code == 403) {
+                    sessions.clear()
+                    Answer.SignedOut(Sentences.SIGN_IN_ENDED)
+                } else {
+                    Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+                }
+            }
+        }
+    }
+
+    // ---- The wire -----------------------------------------------------------------------
+
+    private fun anonRequest(url: String): Request.Builder =
+        Request.Builder().url(url).header("apikey", anonKey).header("Content-Type", "application/json")
+
+    private fun signed(url: String, token: String): Request.Builder =
+        anonRequest(url).header("Authorization", "Bearer $token")
+
+    private sealed interface Wire {
+        data class Http(val code: Int, val body: String, val retryAfter: Int?) : Wire
+        data class Failed(val why: Exception) : Wire
+    }
+
+    private suspend fun send(request: Request): Wire = withContext(io) {
+        try {
+            client.newCall(request).execute().use { r ->
+                val body = r.body.string()
+                // A failed call is logged by status and path — never its body, which may carry a token.
+                if (r.code !in 200..299) android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} → ${r.code}")
+                Wire.Http(r.code, body, r.header("Retry-After")?.trim()?.toIntOrNull())
+            }
+        } catch (e: IOException) {
+            android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} failed: ${e.javaClass.simpleName}: ${e.message}")
+            Wire.Failed(e)
+        } catch (e: IllegalStateException) {
+            android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} failed: ${e.javaClass.simpleName}: ${e.message}")
+            Wire.Failed(e)
+        }
+    }
+
+    /** PostgREST: 2xx is data; 4xx carries `{code, message}` written for a person. */
+    private fun fromRest(wire: Wire.Http): Answer<JsonElement> {
+        val parsed = parseJsonOrNull(wire.body)
+        return when {
+            wire.code in 200..299 -> Answer.Ok(parsed ?: JsonNull)
+            wire.code == 401 -> Answer.SignedOut(Sentences.SIGN_IN_ENDED)
+            wire.code == 429 -> Answer.Refused(tooManySentence(wire.retryAfter), "too_many", wire.retryAfter)
+            wire.code in 400..499 -> {
+                val o = parsed?.asObjectOrNull()
+                Answer.Refused(o?.strOrNull("message")?.takeIf { it.isNotBlank() } ?: "Magic Bill did not accept that.", o?.strOrNull("code"), null)
+            }
+            else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+        }
+    }
+
+    private fun sessionFrom(o: JsonObject, kind: CloudSession.Kind, email: String? = null, staff: StaffIdentity? = null, deviceId: String? = null): CloudSession {
+        val expiresAt = o.long("expires_at").takeIf { it > 0 }?.times(1000)
+            ?: (clock.now() + o.long("expires_in").coerceAtLeast(60) * 1000)
+        return CloudSession(kind, o.str("access_token"), o.str("refresh_token"), expiresAt, email, staff, deviceId)
+    }
+
+    private fun authSentence(o: JsonObject?): String {
+        val code = o?.strOrNull("error_code") ?: o?.strOrNull("error") ?: ""
+        return when (code) {
+            "invalid_credentials", "invalid_grant" -> "That email and password do not match."
+            "email_not_confirmed" -> "Confirm your email first — the link is in your inbox."
+            "over_request_rate_limit", "over_email_send_rate_limit" -> "Too many tries. Wait a minute and try again."
+            else -> o?.strOrNull("error_description") ?: o?.strOrNull("msg") ?: o?.strOrNull("message") ?: "Could not sign in."
+        }
+    }
+
+    private fun tooManySentence(retryAfter: Int?): String {
+        val s = retryAfter ?: 60
+        return if (s >= 120) "Too many tries. Wait ${(s + 59) / 60} minutes." else "Too many tries. Wait $s seconds."
+    }
+
+    companion object {
+        const val TAG = "MagicBill.cloud"
+
+        /** Deadlines the caller owns. A phone on shop WiFi shared with customers is the reference. */
+        fun client(): OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(java.time.Duration.ofSeconds(6))
+            .readTimeout(java.time.Duration.ofSeconds(20))
+            .writeTimeout(java.time.Duration.ofSeconds(20))
+            .callTimeout(java.time.Duration.ofSeconds(30))
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+}

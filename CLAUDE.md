@@ -1,45 +1,53 @@
-# MB-android (Kotlin + Jetpack Compose)
+# MB-android (Kotlin + Jetpack Compose) — 3.x, rebuilt 2026-08-28
 
-- Build: `.\gradlew.bat :app:assembleDebug` with `JAVA_HOME` set to Android
-  Studio's jbr. This machine sets `NoDefaultCurrentDirectoryInExePath=1` —
-  always invoke as `.\gradlew.bat`, never bare `gradlew.bat`.
-- Secrets live in `local.properties` (gitignored): SUPABASE_URL,
-  SUPABASE_ANON_KEY, MB_KEYSTORE_*. Never hardcode; never commit `keys/`.
-- Release signing MUST use `keys/magic-bill-release.keystore` (alias
-  `magicbill`) — same cert as all published builds or in-place updates break.
-  Debug builds are also signed with it so they install over the released app.
-- Design language: open canvas — no cards-in-cards. Sections separate with
-  `SectionHeader` + whitespace; lists use `ListRow`; motion tokens in
-  `ui/theme/Motion.kt`. Payment-mode colors are entity-fixed in
-  `ui/theme/Color.kt` (CVD-validated) — don't repaint them.
-- Data rule: OWNER dashboard/reports/bill-detail read from the local SQLite
-  mirror (`OwnerLocalDao`, topped up by `OwnerSync` — last synced data is
-  always available offline, any range). Staff + account screens read through
-  `CachedQuery` (cache-first, silent refresh). Never block cached content
-  with a spinner.
-- Staff clients never receive the license key; all staff data flows through
-  Edge Functions (`staff-login`, `staff-data`, `staff-manage`).
-- ONE profile screen serves both worlds (`ui/screens/profile/ProfileScreen.kt`,
-  2.4.5). The header, theme toggle, "This phone" line, update button and
-  log-out block are written once; only the middle differs, chosen by a sealed
-  `ProfileSession`. Do not fork it again — that drift is what produced a staff
-  screen with no update button and no version number. The licence key is
-  rendered inside the Owner branch only, so no staff code path can draw it.
-- Connection lifetimes (`OrdersRealtime`, 2.4.5) — TWO LINES, and they are
-  deliberately different:
-  - **presence** (`orders-<room>`) is held for the WHOLE FOREGROUND SESSION of
-    any session with ordering access, not per screen. It is what makes the
-    counter's phone count steady.
-  - **live** (`orders-<room>-live`) is held only while an Orders surface is on
-    screen, plus a **60-second linger**. The linger is what makes navigation
-    free: `release()` schedules a stop, the next `acquire()` cancels it and
-    reuses the channel with no rejoin, no re-read and no presence churn.
-  - Backgrounding starts the same 60s timer for both, from
-    `ProcessLifecycleOwner` — never from screen-level effects, and remember
-    that `addObserver` REPLAYS the current state on registration.
-  - A pending stop carries a token checked inside the lock, so it can never
-    kill a line rebuilt since (including for a new room).
-  Never make either line refcounted by the screens again: Compose Navigation
-  pauses the outgoing screen before the incoming one resumes, so the count
-  passes through zero on every single navigation. Measured cost of that:
-  61 rejoins and 119 presence messages per ten minutes of ordering.
+The phone is a screen. The cloud (`MB-backend/docs/PHONE_API.md`) is the owner's window; the
+counter over the shop's WiFi (`MB-pos/docs/LAN_PROTOCOL.md`) is the floor. The plan and the
+decisions are in `../docs/ANDROID_ROUND.md`.
+
+## Commands
+
+- Build: `.\gradlew.bat :app:assembleDebug` with `JAVA_HOME` = Android Studio's jbr. From
+  bash: `cd MB-android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew …`
+  — **always with an explicit `cd`; the shell's directory drifts.**
+- Tests: `.\gradlew.bat :app:testDebugUnitTest` (JUnit + Robolectric for Room). The hygiene
+  test bans keys, the old library, raw colours outside `ui/theme`, realtime, and Edge Functions
+  other than `staff-login`.
+- Install + drive: `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe install -r app/build/outputs/apk/debug/app-debug.apk`,
+  `adb shell am start -n com.magicbill.app/.MainActivity`, `adb exec-out screencap -p > shot.png`.
+- Secrets live in `local.properties` (gitignored): `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the
+  NEW project `grjhdszcvuomgluaqncf`), `MB_KEYSTORE_*`. Never hardcode; never commit `keys/`.
+- Release signing MUST use `keys/magic-bill-release.keystore` (alias `magicbill`) — the same
+  cert as every published build, or phones cannot update in place. Debug builds are signed
+  with it too. `versionCode` only ever goes up (17 = 3.0.0).
+
+## Shape
+
+`core/` money (paise → text, Indian grouping), IST days, Argon2id (the counter's parameters),
+`Answer` (Ok / Refused / Unreachable / SignedOut), frozen-bill JSON.
+`cloud/` `CloudLink` (OkHttp; password + `staff-login`; PostgREST RPC/REST; one refresh on 401),
+`SessionStore`, `Account` (restaurants, the chosen one), `Mirror` (ONE loop over 14 tables with
+a cursor each), `Sync` (when to pull), `People` (the staff desk), `ReportMath` (sums only).
+`counter/` `CounterLink` (pinned TLS, every LAN route, the WebSocket), `Counter` (pairing,
+credential, `/v1/me`), `Floor` (catalogue cache, the durable intent queue, the floor push),
+`Stream` (the socket's lifetime), `Discovery` (mDNS).
+`db/` Room: the mirror tables, cursors, intents, the floor cache. `prefs/` `Secure` (keystore
+box; `KeyBox` is its seam) and `Plain`.
+`ui/theme` tokens by job, light + dark; `ui/kit` the only components a screen may use;
+`ui/screens/*` one screen set for everybody, filtered by permission; `nav/` type-safe routes.
+
+## Rules
+
+- **No money is computed on the phone.** Reports are sums of `day_*` totals; a bill shows the
+  counter's frozen columns; an order shows the counter's outcome. The one exception the contract
+  names is a line's gross on a receipt (frozen price × frozen qty).
+- **Cache first, one emission.** Every screen draws from Room; a pull is silent; a spinner never
+  covers cached content. Pull on open (if stale), pull-to-refresh, screen open. Never a timer.
+- **Nothing metered but `staff-login`, once per install.** No realtime, no other Edge Function.
+- **Every network call has a deadline** from the OkHttp client; every answer is an `Answer`.
+- **Intents are durable before their first send; their id is kept across restarts; outcomes
+  are final.** A retry uses the same id (`flush`); a held one is released with a NEW id.
+- **The socket lives with the floor screens** (`OnTheFloor`), plus a 60 s linger and the
+  foreground. Never refcount it by screen: Compose Navigation passes through zero on every hop.
+- **The counter's sentences are shown as-is.** The phone composes nothing on top of a refusal.
+- **Colour is never the only signal**; every raw hex lives in `ui/theme/Palette.kt`.
+- StrictMode kills a debug build that touches the network on the main thread.
