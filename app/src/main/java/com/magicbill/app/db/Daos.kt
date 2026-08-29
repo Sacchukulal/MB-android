@@ -174,6 +174,20 @@ interface FloorDao {
     @Query("UPDATE floor_items SET isAvailable = :available WHERE id = :id") suspend fun setAvailable(id: String, available: Boolean)
 
     @Upsert suspend fun putOrder(row: FloorOrderRow)
+    @Upsert suspend fun putIntents(rows: List<IntentRow>)
+
+    /** A whole order, staged in ONE write: its intents and the tile that shows it on the floor. */
+    @Transaction
+    suspend fun stage(intents: List<IntentRow>, pending: FloorOrderRow?) {
+        putIntents(intents)
+        if (pending != null) putOrder(pending)
+    }
+
+    /** Staged orders the counter has answered — their real rows have replaced them. */
+    @Query("DELETE FROM floor_orders WHERE orderId LIKE 'pending_%' AND orderId NOT IN (SELECT 'pending_' || id FROM intents WHERE state = 'queued')")
+    suspend fun dropPendingAnswered()
+    @Query("UPDATE floor_orders SET sending = 0 WHERE sending = 1 AND orderId NOT LIKE 'pending_%'")
+    suspend fun clearSending()
     @Query("SELECT * FROM floor_orders WHERE orderId = :id") suspend fun order(id: String): FloorOrderRow?
     @Query("SELECT * FROM floor_orders WHERE orderId = :id") fun orderFlow(id: String): Flow<FloorOrderRow?>
     @Query("SELECT * FROM floor_orders WHERE closedSays IS NULL ORDER BY updatedMs DESC") fun openOrders(): Flow<List<FloorOrderRow>>

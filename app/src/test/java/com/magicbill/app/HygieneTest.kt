@@ -21,15 +21,32 @@ class HygieneTest {
         assertTrue("keys or the old library in: ${bad.map { it.name }}", bad.isEmpty())
     }
 
-    @Test fun every_colour_lives_in_the_design_system() {
-        // ui/theme is the palette; ui/components is the 2.x design system restored verbatim,
-        // whose semantic colours (delta greens, badge sets) are part of that system. Screens
-        // and the kit never spell a colour.
+    /** ONE palette. Every colour in the app is a value in ui/theme/Palette.kt, read by job. */
+    @Test fun every_colour_lives_in_the_palette() {
         val bad = sources.filter { f ->
             val p = f.path.replace('\\', '/')
-            !p.contains("/ui/theme/") && !p.contains("/ui/components/") && Regex("Color\\(0x[0-9A-Fa-f]{6,8}\\)").containsMatchIn(f.readText())
+            !p.endsWith("/ui/theme/Palette.kt") && Regex("Color\\(0x[0-9A-Fa-f]{6,8}\\)").containsMatchIn(f.readText())
         }
-        assertTrue("raw colours outside the design system in: ${bad.map { it.name }}", bad.isEmpty())
+        assertTrue("raw colours outside the palette in: ${bad.map { it.name }}", bad.isEmpty())
+    }
+
+    /**
+     * ONE kit. Screens read the theme through `Mb.colors` / `Mb.type`, never Material's scheme
+     * or typography directly — those are derived from the palette for Material's own
+     * components, and a screen that reads them is a screen that drifts when the palette moves.
+     */
+    @Test fun screens_read_the_theme_by_job_not_from_material() {
+        val bad = sources.filter { f ->
+            val p = f.path.replace('\\', '/')
+            p.contains("/ui/screens/") && Regex("MaterialTheme\\.(colorScheme|typography)").containsMatchIn(f.readText())
+        }
+        assertTrue("Material's scheme or typography read in a screen: ${bad.map { it.name }}", bad.isEmpty())
+    }
+
+    /** The old component set is gone; there is `ui/kit` and nothing beside it. */
+    @Test fun there_is_one_kit() {
+        val twins = sources.filter { it.path.replace('\\', '/').contains("/ui/components/") }
+        assertTrue("a second kit: ${twins.map { it.name }}", twins.isEmpty())
     }
 
     @Test fun no_realtime_no_polling_no_edge_function_but_the_one() {

@@ -252,7 +252,7 @@ data class FloorItemRow(@androidx.room.PrimaryKey val id: String, val name: Stri
 @Entity(tableName = "floor_tables")
 data class FloorTableRow(@androidx.room.PrimaryKey val id: String, val label: String, val section: String, val seats: Int, val state: String, val ord: Int)
 
-/** An order this phone has touched, as the counter last described it. */
+/** An open order on the floor — anybody's — as the counter last described it. */
 @Entity(tableName = "floor_orders")
 data class FloorOrderRow(
     @androidx.room.PrimaryKey val orderId: String,
@@ -264,6 +264,15 @@ data class FloorOrderRow(
     /** Lines, JSON, as the counter's last outcome or push listed them. */
     val lines: String,
     val note: String?,
+    /** Who opened it, as the counter names them. */
+    val by: String?,
+    val byId: String?,
+    /** Opened by this phone's own person. */
+    val mine: Boolean,
+    /** The bill was asked for from a phone and printed at the counter. */
+    val billAsked: Boolean,
+    /** Staged here and on its way to the counter; the answer clears it. */
+    val sending: Boolean,
     /** Open, or the counter's sentence about why it is not. */
     val closedSays: String?,
     val updatedMs: Long,

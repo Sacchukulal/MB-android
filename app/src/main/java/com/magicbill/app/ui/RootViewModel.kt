@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.Restaurant
 import com.magicbill.app.cloud.Sync
+import com.magicbill.app.counter.Floor
+import com.magicbill.app.counter.Stream
 import com.magicbill.app.counter.Counter
 import com.magicbill.app.counter.Credential
 import com.magicbill.app.db.MbDatabase
@@ -38,7 +40,11 @@ class RootViewModel @Inject constructor(
     private val sync: Sync,
     private val theme: ThemeController,
     private val db: MbDatabase,
+    private val floor: Floor,
+    private val stream: Stream,
 ) : ViewModel() {
+    /** What the counter said, once each — the shell shows them. */
+    val counterSays: kotlinx.coroutines.flow.SharedFlow<String> = floor.sentences
     val themeMode: StateFlow<String> = theme.mode
     val textScale: StateFlow<Float> = theme.textScale
     val restaurant: StateFlow<Restaurant?> = account.current
@@ -97,7 +103,7 @@ class RootViewModel @Inject constructor(
                 account.refresh()
                 sync.pullIfStale()
             }
-            if (counter.isPaired) counter.refreshMe()
+            if (counter.isPaired) { counter.refreshMe(); stream.ensure() }
         }
     }
 

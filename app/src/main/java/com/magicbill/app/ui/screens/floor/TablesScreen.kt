@@ -1,11 +1,14 @@
 package com.magicbill.app.ui.screens.floor
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,11 +24,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeliveryDining
 import androidx.compose.material.icons.outlined.Restaurant
-import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,11 +58,15 @@ import com.magicbill.app.ui.kit.Page
 import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
+import com.magicbill.app.ui.kit.pressScale
+import com.magicbill.app.ui.kit.pulse
 import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.Mb
+import com.magicbill.app.ui.theme.Radius
 import com.magicbill.app.ui.theme.Space
 import com.magicbill.app.ui.theme.isWide
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -64,20 +74,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** The stream is wanted while a floor screen is on. Screens call this from a DisposableEffect. */
-@Composable
-fun OnTheFloor(stream: Stream) {
-    DisposableEffect(Unit) {
-        stream.wanted(true)
-        onDispose { stream.wanted(false) }
-    }
-}
-
 @HiltViewModel
 class TablesViewModel @Inject constructor(private val floor: Floor, val stream: Stream, private val counter: Counter) : ViewModel() {
     data class View(
         val tables: List<FloorTableRow> = emptyList(),
-        val mine: Map<String, FloorOrderRow> = emptyMap(),
+        /** Every open order on a table — anybody's — by table id. */
+        val onTable: Map<String, FloorOrderRow> = emptyMap(),
         val noTable: List<FloorOrderRow> = emptyList(),
     )
 
@@ -89,88 +91,97 @@ class TablesViewModel @Inject constructor(private val floor: Floor, val stream: 
     val revoked: StateFlow<String?> = counter.revokedSays
     val shopName: String get() = counter.credential.value?.shopName ?: "the counter"
 
-    fun opened() { viewModelScope.launch { floor.refreshCatalogue(); floor.refreshFloor(); floor.flush(); counter.refreshMe() } }
+    private val refreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> get() = refreshing
+
+    /** The live line carries the floor; opening the screen only sends what was queued. */
+    fun opened() { stream.ensure(); viewModelScope.launch { floor.flush() } }
+
+    /** Pull down: the snapshot, now. */
+    fun refresh() {
+        viewModelScope.launch {
+            refreshing.value = true
+            floor.refreshCatalogue(); floor.refreshFloor(); floor.flush()
+            refreshing.value = false
+        }
+    }
 }
 
 /**
- * The Orders floor, in the 2.x card style: sections as overlines, cards with the section
- * small, the number big, Free or the money — and a status dot. Tapping a FREE table opens the
- * ORDER BUILDER: nothing reaches the counter until "Send to kitchen", so there are no 0.00
- * ghost orders and no wait per dish.
+ * The Orders floor: sections as overlines, tiles with the section small, the number big, Free
+ * or the money — and a status dot. Every open order is here, anybody's; tap any taken table to
+ * see it. Tapping a FREE table opens the ORDER BUILDER: nothing reaches the counter until
+ * "Send to kitchen", so there are no 0.00 ghost orders and no wait per dish.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, onPair: () -> Unit, vm: TablesViewModel = hiltViewModel()) {
     val view by vm.view.collectAsStateWithLifecycle()
     val stream by vm.streamState.collectAsStateWithLifecycle()
     val revoked by vm.revoked.collectAsStateWithLifecycle()
-    OnTheFloor(vm.stream)
-    androidx.compose.runtime.LaunchedEffect(Unit) { vm.opened() }
+    val refreshing by vm.isRefreshing.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.opened() }
     val wide = isWide()
 
-    Page("Orders", vm.shopName, scroll = false, bottomPadding = 0.dp, actions = { StreamBadge(stream) }) {
-        if (revoked != null) {
-            Notice(Tone.Danger, revoked!!, action = { SecondaryButton("Connect again", onPair) })
-            VGap(Gap.field)
-        }
-        if (view.tables.isEmpty() && view.noTable.isEmpty()) {
-            Empty(
-                if (stream == Stream.State.Off || stream == Stream.State.Connecting) "Bringing the floor from the counter…"
-                else "This shop has no tables set up. Parcel and delivery still work.",
-                action = { SecondaryButton("New parcel order", { openBuilder(NewOrder(orderType = "parcel")) }) },
-            )
-            return@Page
-        }
-        val sections = view.tables.groupBy { it.section.ifBlank { "No section" } }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(if (wide) 5 else 3),
-            horizontalArrangement = Arrangement.spacedBy(Gap.field),
-            verticalArrangement = Arrangement.spacedBy(Gap.field),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = Space.s7),
-        ) {
-            sections.forEach { (section, tables) ->
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        section.uppercase(),
-                        style = Mb.type.label.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp),
-                        color = Mb.colors.inkMuted,
-                        modifier = Modifier.padding(top = Space.s3),
-                    )
-                }
-                items(tables, key = { it.id }) { t ->
-                    val mine = view.mine[t.id]
-                    val taken = mine == null && t.state.isNotBlank() && t.state != "free"
-                    TableCard(t, mine, taken) {
-                        if (mine != null) openOrder(mine.orderId)
-                        else openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
-                    }
-                }
+    PullToRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh) {
+        Page("Orders", vm.shopName, scroll = false, bottomPadding = 0.dp, actions = { StreamBadge(stream) }) {
+            if (revoked != null) {
+                Notice(Tone.Danger, revoked!!, action = { SecondaryButton("Connect again", onPair) })
+                VGap(Gap.field)
             }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column {
-                    Text(
-                        "PARCEL & SELF SERVICE",
-                        style = Mb.type.label.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp),
-                        color = Mb.colors.inkMuted,
-                        modifier = Modifier.padding(top = Space.s4),
-                    )
-                    view.noTable.forEach { o ->
-                        ListRow(
-                            title = o.orderType.replace('_', ' ').replaceFirstChar { it.uppercase() } + (o.token?.let { " · Token $it" } ?: ""),
-                            subtitle = "${Floor.parseLines(o.lines).size} items · ₹" + o.total,
-                            leading = { IconDisc(Icons.Outlined.Restaurant) },
-                            onClick = { openOrder(o.orderId) },
+            if (view.tables.isEmpty() && view.noTable.isEmpty()) {
+                Empty(
+                    if (stream == Stream.State.Off || stream == Stream.State.Connecting) "Bringing the floor from the counter…"
+                    else "This shop has no tables set up. Parcel and delivery still work.",
+                    action = { SecondaryButton("New parcel order", { openBuilder(NewOrder(orderType = "parcel")) }) },
+                )
+                return@Page
+            }
+            val sections = view.tables.groupBy { it.section.ifBlank { "No section" } }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(if (wide) 5 else 3),
+                horizontalArrangement = Arrangement.spacedBy(Gap.field),
+                verticalArrangement = Arrangement.spacedBy(Gap.field),
+                contentPadding = PaddingValues(bottom = Space.s7),
+            ) {
+                sections.forEach { (section, tables) ->
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            section.uppercase(),
+                            style = Mb.type.label.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp),
+                            color = Mb.colors.inkMuted,
+                            modifier = Modifier.padding(top = Space.s3),
                         )
                     }
-                    ListRow(
-                        title = "New parcel order",
-                        leading = { IconDisc(Icons.Outlined.Add) },
-                        onClick = { openBuilder(NewOrder(orderType = "parcel")) },
-                    )
-                    ListRow(
-                        title = "New delivery order",
-                        leading = { IconDisc(Icons.Outlined.DeliveryDining) },
-                        onClick = { openBuilder(NewOrder(orderType = "delivery")) },
-                    )
+                    items(tables, key = { it.id }) { t ->
+                        val order = view.onTable[t.id]
+                        TableCard(t, order) {
+                            if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(order.orderId)
+                            else if (order == null) openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
+                        }
+                    }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column {
+                        Text(
+                            "PARCEL & SELF SERVICE",
+                            style = Mb.type.label.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp),
+                            color = Mb.colors.inkMuted,
+                            modifier = Modifier.padding(top = Space.s4),
+                        )
+                        view.noTable.forEach { o ->
+                            val pending = o.orderId.startsWith(Floor.PENDING_PREFIX)
+                            ListRow(
+                                title = o.orderType.replace('_', ' ').replaceFirstChar { it.uppercase() } + (o.token?.let { " · Token $it" } ?: ""),
+                                subtitle = "${Floor.parseLines(o.lines).size} items · ₹" + o.total + (o.by?.let { " · $it" } ?: ""),
+                                leading = { IconDisc(Icons.Outlined.Restaurant) },
+                                trailing = { if (pending || o.sending) Badge("Sending", Tone.Info) else if (o.billAsked) Badge("Bill", Tone.Ok) },
+                                onClick = if (pending) null else ({ openOrder(o.orderId) }),
+                            )
+                        }
+                        ListRow(title = "New parcel order", leading = { IconDisc(Icons.Outlined.Add) }, onClick = { openBuilder(NewOrder(orderType = "parcel")) })
+                        ListRow(title = "New delivery order", leading = { IconDisc(Icons.Outlined.DeliveryDining) }, onClick = { openBuilder(NewOrder(orderType = "delivery")) })
+                    }
                 }
             }
         }
@@ -187,33 +198,56 @@ fun StreamBadge(state: Stream.State) {
     }
 }
 
-/** The 2.x table card: section small, number big, Free or the money, a status dot top-right. */
+/**
+ * A table tile: section small, number big, Free or the money, a status dot top-right. Mine
+ * wears the accent ring; somebody else's a quiet dot and their name; one still on its way to
+ * the counter breathes.
+ */
 @Composable
-private fun TableCard(t: FloorTableRow, mine: FloorOrderRow?, taken: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(14.dp)
+private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, onClick: () -> Unit) {
+    val c = Mb.colors
+    val shape = RoundedCornerShape(Radius.md)
     val big = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
-    val dot = when { mine != null -> Mb.colors.accent; taken -> Mb.colors.warn; else -> Mb.colors.lineSoft }
+    val sending = order != null && (order.sending || order.orderId.startsWith(Floor.PENDING_PREFIX))
+    val dot by animateColorAsState(
+        when {
+            order == null -> c.lineSoft
+            order.billAsked -> c.ok
+            order.mine -> c.accent
+            else -> c.warn
+        },
+        label = "tableDot",
+    )
+    val ring by animateColorAsState(if (order?.mine == true) c.accent else androidx.compose.ui.graphics.Color.Transparent, label = "tableRing")
+    val interaction = remember { MutableInteractionSource() }
     Column(
-        Modifier.aspectRatio(0.92f).clip(shape)
-            .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainer)
-            .border(if (mine != null) 1.5.dp else 0.dp, if (mine != null) Mb.colors.accent else androidx.compose.ui.graphics.Color.Transparent, shape)
-            .clickable(onClick = onClick)
+        Modifier.aspectRatio(0.92f).pressScale(interaction).clip(shape)
+            .background(c.surface)
+            .border(1.5.dp, ring, shape)
+            .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
             .padding(Space.s3),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Text(t.section.uppercase().ifBlank { "TABLE" }, style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+            Text(t.section.uppercase().ifBlank { "TABLE" }, style = Mb.type.caption, color = c.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(dot).pulse(sending))
         }
-        Text(big, style = Mb.type.stat, color = Mb.colors.ink, maxLines = 1)
+        Text(big, style = Mb.type.stat, color = c.ink, maxLines = 1)
         Box(Modifier.weight(1f))
         when {
-            mine != null -> {
-                Text("₹" + mine.total, style = Mb.type.cell.copy(fontWeight = FontWeight.SemiBold), color = Mb.colors.ink, maxLines = 1)
-                val n = Floor.parseLines(mine.lines).size
-                Text((mine.token?.let { "#$it · " } ?: "") + if (n == 1) "1 item" else "$n items", style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 1)
+            order != null -> {
+                Text("₹" + order.total, style = Mb.type.cell.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1)
+                val n = Floor.parseLines(order.lines).size
+                Text(
+                    when {
+                        sending -> "Sending…"
+                        order.billAsked -> "Bill printed"
+                        !order.mine && !order.by.isNullOrBlank() -> order.by
+                        else -> (order.token?.let { "#$it · " } ?: "") + if (n == 1) "1 item" else "$n items"
+                    },
+                    style = Mb.type.caption, color = if (sending) c.accent else c.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
-            taken -> Text("Taken", style = Mb.type.caption, color = Mb.colors.warn)
-            else -> Text("Free", style = Mb.type.caption, color = Mb.colors.inkMuted)
+            else -> Text("Free", style = Mb.type.caption, color = c.inkMuted)
         }
     }
 }

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -47,12 +46,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.Mb
+import com.magicbill.app.ui.theme.Radius
 import com.magicbill.app.ui.theme.Space
 
 /*
- * The kit, in the 2.x design language: OPEN CANVAS. Sections separate with typography and
- * whitespace, never boxes; lists are borderless rows that breathe via padding; the glow behind
- * the screen gives the depth. No cards-in-cards, no dividers, no borders.
+ * The kit, in the one language: OPEN CANVAS. Sections separate with typography and whitespace,
+ * never boxes; lists are borderless rows that breathe via padding; the glow behind the screen
+ * gives the depth. No cards-in-cards, no dividers, no borders.
  */
 
 /** A screen. Large-title header (typography, not an app bar), content on the canvas. */
@@ -77,24 +77,24 @@ fun Page(
     }
 }
 
-/** Large title + optional circular tonal back button — the old ScreenHeader, kept exactly. */
+/** Large title + optional circular raised back button. */
 @Composable
 fun PageHeader(title: String, subtitle: String? = null, back: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
     Column(Modifier.fillMaxWidth().statusBarsPadding().padding(start = Gap.page, end = Gap.page, top = 12.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (back != null) {
                 Box(
-                    Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh).clickable(onClick = back),
+                    Modifier.size(42.dp).clip(CircleShape).background(Mb.colors.raisedHigh).clickable(onClick = back),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Mb.colors.ink, modifier = Modifier.size(20.dp))
                 }
                 Spacer(Modifier.width(14.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = Mb.type.page, color = Mb.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle != null) {
-                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(subtitle, style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             actions()
@@ -110,20 +110,16 @@ fun Section(title: String, trailing: (@Composable () -> Unit)? = null, first: Bo
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            title.uppercase(),
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text(title.uppercase(), style = Mb.type.label.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp), color = Mb.colors.inkMuted)
         trailing?.invoke()
     }
 }
 
-/** Open canvas: a Panel is just a breathing group now — NO box, no border, no shadow. */
+/** Open canvas: a Panel is just a breathing group — NO box, no border, no shadow. */
 @Composable
 fun Panel(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(vertical = Space.s2), onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     val m = modifier.fillMaxWidth()
-        .clip(MaterialTheme.shapes.large)
+        .clip(RoundedCornerShape(Radius.lg))
         .let { if (onClick != null) it.clickable(onClick = onClick) else it }
         .padding(padding)
     Column(m) { content() }
@@ -133,11 +129,11 @@ fun Panel(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(
 @Composable
 fun KeyValue(label: String, value: String, valueColor: Color? = null, bold: Boolean = false) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(label, style = Mb.type.body, color = Mb.colors.inkMuted, modifier = Modifier.weight(1f))
         Text(
             value,
-            style = if (bold) MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum") else Mb.type.cell,
-            color = valueColor ?: MaterialTheme.colorScheme.onSurface,
+            style = if (bold) Mb.type.cell.copy(fontWeight = FontWeight.SemiBold) else Mb.type.cell,
+            color = valueColor ?: Mb.colors.ink,
             textAlign = TextAlign.End,
         )
     }
@@ -155,7 +151,7 @@ fun ListRow(
 ) {
     Row(
         Modifier.fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
+            .clip(RoundedCornerShape(Radius.lg))
             .let { if (onClick != null) it.clickable(onClick = onClick) else it }
             .padding(horizontal = 4.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -165,9 +161,9 @@ fun ListRow(
             Spacer(Modifier.width(14.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = titleColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = Mb.type.body, color = titleColor ?: Mb.colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!subtitle.isNullOrBlank()) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         if (trailing != null) {
@@ -177,9 +173,9 @@ fun ListRow(
     }
 }
 
-/** A tinted icon disc for a ListRow's leading slot — the old app's list identity. */
+/** A tinted icon disc for a ListRow's leading slot. */
 @Composable
-fun IconDisc(icon: ImageVector, tint: Color = MaterialTheme.colorScheme.primary) {
+fun IconDisc(icon: ImageVector, tint: Color = Mb.colors.accent) {
     Box(Modifier.size(42.dp).background(tint.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
     }
@@ -200,9 +196,9 @@ fun HGap(space: androidx.compose.ui.unit.Dp = Gap.inline) = Spacer(Modifier.widt
 @Composable
 fun Empty(sentence: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
     Column(modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(Icons.Outlined.Inbox, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.Outlined.Inbox, contentDescription = null, modifier = Modifier.size(48.dp), tint = Mb.colors.inkFaint)
         Spacer(Modifier.height(16.dp))
-        Text(sentence, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Text(sentence, style = Mb.type.body, color = Mb.colors.inkMuted, textAlign = TextAlign.Center)
         if (action != null) {
             Spacer(Modifier.height(16.dp))
             action()
@@ -227,7 +223,7 @@ fun Tone.soft(): Color = when (this) {
     Tone.Warn -> Mb.colors.warnSoft
     Tone.Danger -> Mb.colors.dangerSoft
     Tone.Info -> Mb.colors.infoSoft
-    Tone.Quiet -> MaterialTheme.colorScheme.surfaceContainerHigh
+    Tone.Quiet -> Mb.colors.raisedHigh
 }
 
 fun Tone.icon(): ImageVector = when (this) {
@@ -238,21 +234,25 @@ fun Tone.icon(): ImageVector = when (this) {
     Tone.Quiet -> Icons.Outlined.Info
 }
 
-/** A sentence with a tone: one soft rounded slab, icon + words. Colour never alone. */
+/**
+ * A state a screen is in — an order the counter has finished with, a phone that was removed —
+ * as one quiet line: icon + words in the tone, a faint tint behind. Never for a passing
+ * sentence; those go through the reporter and leave by themselves.
+ */
 @Composable
 fun Notice(tone: Tone, sentence: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
     Row(
-        modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).background(tone.soft()).padding(14.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.md)).background(tone.soft().copy(alpha = 0.55f)).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Gap.field),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inline),
     ) {
-        Icon(tone.icon(), contentDescription = null, tint = tone.color(), modifier = Modifier.size(20.dp))
-        Text(sentence, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+        Icon(tone.icon(), contentDescription = null, tint = tone.color(), modifier = Modifier.size(18.dp))
+        Text(sentence, style = Mb.type.caption, color = Mb.colors.ink, modifier = Modifier.weight(1f))
         action?.invoke()
     }
 }
 
-/** Status pill with a leading dot — `● Active`, the old MBBadge look. */
+/** Status pill with a leading dot — `● Live`. */
 @Composable
 fun Badge(text: String, tone: Tone = Tone.Quiet) {
     Row(
@@ -261,6 +261,6 @@ fun Badge(text: String, tone: Tone = Tone.Quiet) {
     ) {
         Box(Modifier.size(6.dp).background(tone.color(), CircleShape))
         Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium, color = if (tone == Tone.Quiet) MaterialTheme.colorScheme.onSurfaceVariant else tone.color())
+        Text(text, style = Mb.type.label, color = if (tone == Tone.Quiet) Mb.colors.inkMuted else tone.color())
     }
 }

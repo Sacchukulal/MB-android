@@ -70,6 +70,12 @@ data class PairedDevice(
     @SerialName("server_id") val serverId: String,
 )
 
+/** Somebody on the staff list a phone can belong to (LAN_PROTOCOL.md §3). */
+data class Person(val id: String, val name: String)
+
+/** The counter's answer to a presented code: the request to claim, and who it could be for. */
+data class Asked(val requestId: String, val people: List<Person>)
+
 /** `GET /v1/me`: who this phone is at the counter, and what its person may do there. */
 data class Me(val deviceId: String, val name: String, val staffId: String?, val may: Set<String>) {
     companion object {
@@ -90,12 +96,17 @@ data class Catalogue(val version: String, val items: List<CatalogueItem>, val ta
 data class CatalogueItem(val id: String, val name: String, val category: String, val price: String, val isAvailable: Boolean)
 data class CatalogueTable(val id: String, val label: String, val section: String, val seats: Int, val state: String)
 
-/** An intent: the phone asks; the counter decides. There is nowhere in here to put money. */
-data class Intent(val id: String, val orderId: String?, val at: Long, val what: JsonObject) {
+/**
+ * An intent: the phone asks; the counter decides. There is nowhere in here to put money.
+ * [at] is when the person pressed; [sentAt] is stamped by the link the moment it goes, on
+ * the same clock — the counter reads the age as the gap between them (§5).
+ */
+data class Intent(val id: String, val orderId: String?, val at: Long, val what: JsonObject, val sentAt: Long? = null) {
     fun toJson(): JsonObject = buildJsonObject {
         put("id", id)
         put("order_id", orderId?.let { JsonPrimitive(it) } ?: JsonNull)
         put("at", at)
+        put("sent_at", sentAt?.let { JsonPrimitive(it) } ?: JsonNull)
         put("what", what)
     }
 
@@ -120,7 +131,8 @@ object Ops {
     fun sendToKitchen() = buildJsonObject { put("do", "send_to_kitchen") }
     fun moveTable(tableId: String) = buildJsonObject { put("do", "move_table"); put("table_id", tableId) }
     fun cancelOrder(reason: String) = buildJsonObject { put("do", "cancel_order"); put("reason", reason) }
-    fun requestBill() = buildJsonObject { put("do", "request_bill") }
+    /** The counter prints the bill for the table; the waiter carries it over. */
+    fun printBill() = buildJsonObject { put("do", "request_bill") }
 }
 
 /** A line of the order as the counter sees it. The money is the counter's. */

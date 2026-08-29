@@ -15,8 +15,9 @@ import javax.inject.Singleton
 /**
  * This phone's link to a counter: the credential, who we are there, and pairing. Pairing is
  * LAN_PROTOCOL.md §3, in order: hello over a connection that trusts nothing → compare what was
- * presented with the QR → pin → present the token → wait for somebody to press Allow → keep
- * the secret (shown once) in the keystore-backed box.
+ * presented with the QR → pin → present the token → the person names themselves and proves it
+ * with their PIN (or a shared tablet waits for somebody to press Allow) → keep the secret
+ * (shown once) in the keystore-backed box.
  */
 @Singleton
 class Counter @Inject constructor(
@@ -42,18 +43,14 @@ class Counter @Inject constructor(
         meState.value = secure.get(ME)?.let { try { com.magicbill.app.core.parseJsonOrNull(it)?.let { j -> Me.parse(j as kotlinx.serialization.json.JsonObject) } } catch (e: Exception) { null } }
     }
 
-    sealed interface Step {
-        data object Checking : Step
-        data class Waiting(val shopName: String) : Step
-        data object Done : Step
-    }
+    /** A code presented and accepted: the counter's name, the request to claim, and who it could be for. */
+    data class Presented(val code: PairCode, val shopName: String, val asked: Asked)
 
     /**
-     * Pairs with the counter on [code]. [onStep] tells the screen where we are; the person at
-     * the counter has five minutes to press Allow.
+     * Step one: present the code. Checks the counter is the one on the code, pins it, and
+     * presents the token. Nothing is issued yet — the person still has to say who they are.
      */
-    suspend fun pair(code: PairCode, phoneName: String, onStep: (Step) -> Unit): Answer<Credential> {
-        onStep(Step.Checking)
+    suspend fun present(code: PairCode, phoneName: String): Answer<Presented> {
         val seen = when (val a = link.helloUnpinned(code.host, code.port)) {
             is Answer.Ok -> a.value
             is Answer.Refused -> return a
@@ -63,31 +60,60 @@ class Counter @Inject constructor(
         if (!Fingerprints.same(seen.presentedFingerprint, code.fingerprint)) {
             return Answer.Refused("That is not the till on the code.")
         }
-        val requestId = when (val a = link.pair(code.host, code.port, code.fingerprint, phoneName, code.token)) {
-            is Answer.Ok -> a.value
+        return when (val a = link.pair(code.host, code.port, code.fingerprint, phoneName, code.token)) {
+            is Answer.Ok -> Answer.Ok(Presented(code, seen.hello.shopName, a.value))
+            is Answer.Refused -> a
+            is Answer.Unreachable -> a
+            is Answer.SignedOut -> a
+        }
+    }
+
+    /** Step two, a person: their name and their PIN. A credential on the spot. */
+    suspend fun claim(presented: Presented, staffId: String, pin: String): Answer<Credential> {
+        val code = presented.code
+        return when (val a = link.claim(code.host, code.port, code.fingerprint, presented.asked.requestId, staffId, pin)) {
+            is Answer.Ok -> a.value?.let { Answer.Ok(keepPaired(code, presented.shopName, it)) }
+                ?: Answer.Refused("The counter did not let this phone in. Try again.")
+            is Answer.Refused -> a
+            is Answer.Unreachable -> a
+            is Answer.SignedOut -> a
+        }
+    }
+
+    /**
+     * Step two, a shared tablet: nobody's, so somebody at the counter has five minutes to press
+     * Allow. [onWaiting] tells the screen the wait has begun.
+     */
+    suspend fun waitForAllow(presented: Presented, onWaiting: () -> Unit): Answer<Credential> {
+        val code = presented.code
+        when (val a = link.claim(code.host, code.port, code.fingerprint, presented.asked.requestId, null, null)) {
+            is Answer.Ok -> a.value?.let { return Answer.Ok(keepPaired(code, presented.shopName, it)) }
             is Answer.Refused -> return a
             is Answer.Unreachable -> return a
             is Answer.SignedOut -> return a
         }
-        onStep(Step.Waiting(seen.hello.shopName))
+        onWaiting()
         val deadline = clock.now() + 5 * 60_000
-        var paired: PairedDevice? = null
-        while (paired == null) {
-            if (clock.now() > deadline) return Answer.Refused("Nobody at the counter pressed Allow in five minutes. Ask for a new code.")
+        while (true) {
+            if (clock.now() > deadline) return Answer.Refused("Nobody at the counter pressed Allow in five minutes. Scan the code again.")
             delay(1_500)
-            when (val a = link.pairStatus(code.host, code.port, code.fingerprint, requestId)) {
-                is Answer.Ok -> paired = a.value
+            when (val a = link.pairStatus(code.host, code.port, code.fingerprint, presented.asked.requestId)) {
+                is Answer.Ok -> a.value?.let { return Answer.Ok(keepPaired(code, presented.shopName, it)) }
                 is Answer.Refused -> return a
                 is Answer.Unreachable -> {} // a blip while waiting is not a refusal
                 is Answer.SignedOut -> return a
             }
         }
-        val c = Credential(code.host, code.port, code.fingerprint, paired.serverId, seen.hello.shopName, paired.deviceId, paired.secret)
+    }
+
+    private suspend fun keepPaired(code: PairCode, shopName: String, paired: PairedDevice): Credential {
+        val c = Credential(code.host, code.port, code.fingerprint, paired.serverId, shopName, paired.deviceId, paired.secret)
         keep(c)
         revoked.value = null
-        refreshMe()
-        onStep(Step.Done)
-        return Answer.Ok(c)
+        // Who this phone is at the counter — the floor marks "mine" by it. A phone that has just
+        // paired must not walk onto the floor as nobody, so a first miss is tried once more.
+        if (refreshMe() !is Answer.Ok) { delay(600); refreshMe() }
+        return c
     }
 
     /** `GET /v1/me`; a 401 here means revoked, and the counter's sentence is kept for the screen. */
@@ -96,8 +122,8 @@ class Counter @Inject constructor(
         return when (val a = link.me(c)) {
             is Answer.Ok -> { meState.value = a.value; secure.put(ME, meJson(a.value)); a }
             is Answer.SignedOut -> { revoked.value = a.sentence; a }
-            is Answer.Refused -> a
-            is Answer.Unreachable -> a
+            is Answer.Refused -> { android.util.Log.w("MagicBill", "/v1/me refused: ${a.sentence}"); a }
+            is Answer.Unreachable -> { android.util.Log.w("MagicBill", "/v1/me unreachable: ${a.sentence}"); a }
         }
     }
 

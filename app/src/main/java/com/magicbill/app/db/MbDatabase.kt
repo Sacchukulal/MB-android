@@ -6,7 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * The phone's own copy. Version 1 of the rebuilt app: the old app's database is a different
+ * The phone's own copy. Version 2 of the rebuilt app (the floor became the whole floor): the old app's database is a different
  * file and is left where it is; this one is filled by the mirror in seconds.
  */
 @Database(
@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         MenuItemRow::class, MenuCategoryRow::class, NoticeRow::class, NoticeReadRow::class,
         CursorRow::class, IntentRow::class, FloorItemRow::class, FloorTableRow::class, FloorOrderRow::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class MbDatabase : RoomDatabase() {

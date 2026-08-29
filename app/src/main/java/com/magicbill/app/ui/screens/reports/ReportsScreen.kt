@@ -185,9 +185,9 @@ fun ReportsScreen(openBill: (String) -> Unit, vm: ReportsViewModel = hiltViewMod
         ChipRow(Ranges.names + Ranges.CUSTOM, choice) { if (it == Ranges.CUSTOM) picking = true else vm.pick(it) }
         VGap(Gap.group)
         Text("Net sales", style = Mb.type.label, color = Mb.colors.inkMuted)
-        com.magicbill.app.ui.components.AnimatedRupees(t.netPaise.paiseToRupees())
+        com.magicbill.app.ui.kit.AnimatedRupees(t.netPaise.paiseToRupees())
         VGap(Space.s2)
-        com.magicbill.app.ui.components.DeltaChip(
+        com.magicbill.app.ui.kit.DeltaChip(
             t.netPaise.paiseToRupees(),
             report.before.netPaise.takeIf { it > 0 }?.paiseToRupees(),
             label = if (report.range.days == 1L) "vs the day before" else "vs the ${report.range.days} days before",
@@ -201,8 +201,8 @@ fun ReportsScreen(openBill: (String) -> Unit, vm: ReportsViewModel = hiltViewMod
         if (report.range.days > 1) {
             Section("By day")
             val fmt = DateTimeFormatter.ofPattern(if (report.range.days <= 7) "EEE" else "d MMM")
-            com.magicbill.app.ui.components.TrendChart(
-                report.perDay.map { (d, v) -> com.magicbill.app.ui.components.TrendPoint(d.format(fmt), v.paiseToRupees()) },
+            com.magicbill.app.ui.kit.TrendChart(
+                report.perDay.map { (d, v) -> com.magicbill.app.ui.kit.TrendPoint(d.format(fmt), v.paiseToRupees()) },
             )
             report.perDay.maxByOrNull { it.second }?.takeIf { it.second > 0 }?.let { (d, v) ->
                 VGap(Gap.field)

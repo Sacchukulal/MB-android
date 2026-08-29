@@ -23,7 +23,6 @@ import com.magicbill.app.ui.kit.LocalReporter
 import com.magicbill.app.ui.kit.Notice
 import com.magicbill.app.ui.kit.Page
 import com.magicbill.app.ui.kit.QuietButton
-import com.magicbill.app.ui.kit.RowLine
 import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Section
 import com.magicbill.app.ui.kit.Tone
@@ -56,7 +55,6 @@ fun QueueScreen(vm: QueueViewModel = hiltViewModel()) {
     val view by vm.view.collectAsStateWithLifecycle()
     val stream by vm.stream.state.collectAsStateWithLifecycle()
     val reporter = LocalReporter.current
-    OnTheFloor(vm.stream)
     val today = Ist.today(vm.clock.now())
 
     Page("Queue", "What this phone sent the counter", actions = { StreamBadge(stream) }) {
@@ -67,7 +65,7 @@ fun QueueScreen(vm: QueueViewModel = hiltViewModel()) {
         }
         if (view.held.isNotEmpty()) {
             Section("Held by the counter", first = view.queued.isEmpty())
-            Text("Typed more than twelve hours ago. Send again only if it still applies.", style = Mb.type.caption, color = Mb.colors.inkMuted)
+            Text("Held more than twelve hours between typing and sending. Send again only if it still applies.", style = Mb.type.caption, color = Mb.colors.inkMuted)
             VGap(Gap.field)
             view.held.forEach { r ->
                 QueueRow(r, today, { Badge("Held", Tone.Warn) })
@@ -91,5 +89,4 @@ private fun QueueRow(r: IntentRow, today: java.time.LocalDate, badge: @Composabl
         listOfNotNull(r.tableLabel?.let { "Table $it" }, Ist.moment(r.createdMs, today), says?.takeIf { it.isNotBlank() }).joinToString(" · "),
         trailing = badge,
     )
-    RowLine()
 }

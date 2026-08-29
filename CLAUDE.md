@@ -10,7 +10,7 @@ decisions are in `../docs/ANDROID_ROUND.md`.
   bash: `cd MB-android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew …`
   — **always with an explicit `cd`; the shell's directory drifts.**
 - Tests: `.\gradlew.bat :app:testDebugUnitTest` (JUnit + Robolectric for Room). The hygiene
-  test bans keys, the old library, raw colours outside `ui/theme`, realtime, and Edge Functions
+  test bans keys, the old library, raw colours outside `ui/theme/Palette.kt`, Material tokens in screens, a second kit, realtime, and Edge Functions
   other than `staff-login`.
 - Install + drive: `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe install -r app/build/outputs/apk/debug/app-debug.apk`,
   `adb shell am start -n com.magicbill.app/.MainActivity`, `adb exec-out screencap -p > shot.png`.
@@ -32,7 +32,9 @@ credential, `/v1/me`), `Floor` (catalogue cache, the durable intent queue, the f
 `Stream` (the socket's lifetime), `Discovery` (mDNS).
 `db/` Room: the mirror tables, cursors, intents, the floor cache. `prefs/` `Secure` (keystore
 box; `KeyBox` is its seam) and `Plain`.
-`ui/theme` tokens by job, light + dark; `ui/kit` the only components a screen may use;
+`ui/theme` ONE palette (`Palette.kt`), ONE scale (`Tokens.kt`); Material's scheme and typography are
+derived from them in `Theme.kt`. `ui/kit` the only components a screen may use — the hygiene
+test forbids `MaterialTheme.colorScheme`/`typography` in screens and any second component set;
 `ui/screens/*` one screen set for everybody, filtered by permission; `nav/` type-safe routes.
 
 ## Rules
@@ -46,8 +48,15 @@ box; `KeyBox` is its seam) and `Plain`.
 - **Every network call has a deadline** from the OkHttp client; every answer is an `Answer`.
 - **Intents are durable before their first send; their id is kept across restarts; outcomes
   are final.** A retry uses the same id (`flush`); a held one is released with a NEW id.
-- **The socket lives with the floor screens** (`OnTheFloor`), plus a 60 s linger and the
-  foreground. Never refcount it by screen: Compose Navigation passes through zero on every hop.
+- **The socket lives with the app**, not with a screen: open while paired and in front, 60 s
+  linger after background, reopened on return (`Stream.ensure()`). No screen may toggle it —
+  a per-screen switch once left the phone deaf 60 s after every tab hop. The counter counts
+  the phone as live while it is open.
+- **Sending never waits on a screen.** `Floor.stageOrder` writes the whole order in ONE
+  transaction, shows it on the floor as a sending tile, and flushes in the app scope; the
+  counter's sentence arrives on `Floor.sentences` and the shell shows it once, at the top.
+- **The floor is the whole floor.** Every open order is on the phone (`by`/`mine` say whose);
+  tapping any taken table opens that order.
 - **The counter's sentences are shown as-is.** The phone composes nothing on top of a refusal.
 - **Colour is never the only signal**; every raw hex lives in `ui/theme/Palette.kt`.
 - StrictMode kills a debug build that touches the network on the main thread.

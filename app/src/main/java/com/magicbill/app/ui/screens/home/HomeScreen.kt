@@ -146,10 +146,10 @@ fun HomeScreen(onNotices: () -> Unit, unread: Int, vm: HomeViewModel = hiltViewM
                 style = Mb.type.label.copy(letterSpacing = androidx.compose.ui.unit.TextUnit(1.2f, androidx.compose.ui.unit.TextUnitType.Sp)),
                 color = Mb.colors.inkMuted,
             )
-            com.magicbill.app.ui.components.AnimatedRupees(t.netPaise.paiseToRupees())
+            com.magicbill.app.ui.kit.AnimatedRupees(t.netPaise.paiseToRupees())
             VGap(Space.s2)
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Gap.inline)) {
-                com.magicbill.app.ui.components.DeltaChip(t.netPaise.paiseToRupees(), today.yesterday.netPaise.takeIf { it > 0 }?.paiseToRupees())
+                com.magicbill.app.ui.kit.DeltaChip(t.netPaise.paiseToRupees(), today.yesterday.netPaise.takeIf { it > 0 }?.paiseToRupees())
             }
             VGap(Gap.group)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Gap.field)) {
@@ -159,8 +159,8 @@ fun HomeScreen(onNotices: () -> Unit, unread: Int, vm: HomeViewModel = hiltViewM
             }
             if (today.fortnight.any { it.second > 0 }) {
                 Section("Last 14 days")
-                com.magicbill.app.ui.components.TrendChart(
-                    today.fortnight.map { (d, v) -> com.magicbill.app.ui.components.TrendPoint(Ist.dateWords(d, Ist.today(vm.now())), v.paiseToRupees()) },
+                com.magicbill.app.ui.kit.TrendChart(
+                    today.fortnight.map { (d, v) -> com.magicbill.app.ui.kit.TrendPoint(Ist.dateWords(d, Ist.today(vm.now())), v.paiseToRupees()) },
                 )
             }
             // The 2.x payment split: the four modes always listed, each with its share and money.

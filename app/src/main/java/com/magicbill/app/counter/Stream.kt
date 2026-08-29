@@ -3,7 +3,6 @@ package com.magicbill.app.counter
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import com.magicbill.app.core.Clock
 import com.magicbill.app.core.parseJsonOrNull
 import com.magicbill.app.di.AppScope
 import com.magicbill.app.prefs.KeyBox
@@ -24,10 +23,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The one long-lived connection: `/v1/stream`. Open while a floor screen is in the foreground,
- * plus a sixty-second linger so a tap between screens is free; closed otherwise. Reconnects
- * with `since=<seq>` and backs off. On `too_far_behind` the phone refetches ONCE, as a
- * decision, not a storm (LAN_PROTOCOL.md §4).
+ * The one long-lived connection: `/v1/stream`. Open for as long as this phone is paired and
+ * the app is in front — not per screen. A screen that toggled it on its way in and off on its
+ * way out once left the phone deaf sixty seconds after every tab hop; now nothing a screen does
+ * can close it. Sixty seconds after the app goes to the background it closes, and it reopens
+ * the moment the app comes back. Reconnects with `since=<seq>` and backs off. On
+ * `too_far_behind` the phone refetches ONCE, as a decision, not a storm (LAN_PROTOCOL.md §4).
+ *
+ * The counter counts a phone as live while this is open — that is the number on its top bar.
  */
 @Singleton
 class Stream @Inject constructor(
@@ -35,7 +38,6 @@ class Stream @Inject constructor(
     private val counter: Counter,
     private val floor: Floor,
     private val secure: KeyBox,
-    private val clock: Clock,
     @AppScope private val scope: CoroutineScope,
 ) {
     enum class State { Off, Connecting, Live, Lost }
@@ -44,7 +46,6 @@ class Stream @Inject constructor(
     val state: StateFlow<State> get() = stateFlow
 
     private var socket: WebSocket? = null
-    private var wanted = false
     private var foreground = true
     private var linger: Job? = null
     private var reconnect: Job? = null
@@ -53,20 +54,18 @@ class Stream @Inject constructor(
 
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) { foreground = true; if (wanted) open() }
+            override fun onStart(owner: LifecycleOwner) { foreground = true; linger?.cancel(); linger = null; open() }
             override fun onStop(owner: LifecycleOwner) { foreground = false; scheduleClose() }
         })
+        // A pairing made or broken while the app is open.
+        scope.launch {
+            counter.credential.collect { c -> if (c == null) close() else if (foreground) open() }
+        }
     }
 
-    /** A floor screen appeared (true) or went away (false). */
-    fun wanted(on: Boolean) {
-        wanted = on
-        if (on) {
-            linger?.cancel(); linger = null
-            if (foreground) open()
-        } else {
-            scheduleClose()
-        }
+    /** The app came to the floor: make sure the line is up. Safe to call any time. */
+    fun ensure() {
+        if (foreground) open()
     }
 
     private fun scheduleClose() {
@@ -101,7 +100,11 @@ class Stream @Inject constructor(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             attempt = 0
             stateFlow.value = State.Live
-            scope.launch { floor.flush() } // what was queued while we were away
+            scope.launch {
+                if (counter.me.value == null) counter.refreshMe() // a phone that never learnt who it is
+                floor.flush() // what was queued while we were away
+                floor.refreshCatalogue() // one cheap 304 when nothing changed
+            }
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -132,14 +135,14 @@ class Stream @Inject constructor(
         synchronized(lock) {
             if (socket !== which) return
             socket = null
-            if (!wanted || !foreground) { stateFlow.value = State.Off; return }
+            if (!foreground || counter.credential.value == null) { stateFlow.value = State.Off; return }
             stateFlow.value = State.Lost
             val wait = BACKOFF_MS[attempt.coerceAtMost(BACKOFF_MS.size - 1)]
             attempt++
             reconnect = scope.launch {
                 delay(wait)
                 if (attempt >= 3) withContext(Dispatchers.IO) { counter.rediscover() } // the counter may have moved
-                if (wanted && foreground) open()
+                if (foreground) open()
             }
         }
     }

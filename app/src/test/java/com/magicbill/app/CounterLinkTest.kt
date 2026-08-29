@@ -92,7 +92,7 @@ class CounterLinkTest {
         assertEquals("Masala Dosa", ok.lines.single().name)
 
         server.once("POST", "/v1/intent", FakeServer.Reply(202, """{"outcome":"held","message":"This was typed more than 12 hours ago.","batch_id":"b1"}"""))
-        assertTrue((link.intent(cred, Intent("i3", null, 1L, Ops.requestBill())) as Answer.Ok).value is Outcome.Held)
+        assertTrue((link.intent(cred, Intent("i3", null, 1L, Ops.printBill())) as Answer.Ok).value is Outcome.Held)
     }
 
     @Test fun the_counters_sentences_travel_as_is() = runTest {
@@ -121,10 +121,21 @@ class CounterLinkTest {
         assertEquals("Hall", c.tables.single().section)
     }
 
-    @Test fun pairing_waits_for_allow() = runTest {
-        server.once("POST", "/v1/pair", FakeServer.Reply(202, """{"request_id":"rq1","message":"Waiting…"}"""))
-        assertEquals(Answer.Ok("rq1"), link.pair("h", 1, "0".repeat(64), "Ravi's phone", "8GF-CVC"))
+    @Test fun pairing_names_the_people_and_a_pin_claims_one() = runTest {
+        server.once("POST", "/v1/pair", FakeServer.Reply(202, """{"request_id":"rq1","message":"Waiting…","people":[{"id":"stf_1","name":"Ravi"}]}"""))
+        val asked = (link.pair("h", 1, "0".repeat(64), "Ravi's phone", "8GF-CVC") as Answer.Ok).value
+        assertEquals("rq1", asked.requestId)
+        assertEquals("Ravi", asked.people.single().name)
         assertTrue(server.sent.single().body.contains("\"platform\":\"android\""))
+        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(403, """{"message":"That PIN is not right. 2 tries left."}"""))
+        val wrong = link.claim("h", 1, "0".repeat(64), "rq1", "stf_1", "0000") as Answer.Refused
+        assertEquals("403", wrong.code)
+        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(200, """{"device_id":"dev_9","secret":"s9","server_id":"srv_1"}"""))
+        assertEquals("dev_9", (link.claim("h", 1, "0".repeat(64), "rq1", "stf_1", "1234") as Answer.Ok).value?.deviceId)
+        assertTrue(server.sent.last().body.contains("\"pin\":\"1234\""))
+        // A shared tablet names nobody and keeps polling.
+        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(202, """{"message":"Waiting for somebody at the counter to allow this phone."}"""))
+        assertEquals(Answer.Ok(null), link.claim("h", 1, "0".repeat(64), "rq1", null, null))
         server.once("GET", "/v1/pair/rq1", FakeServer.Reply(202, """{"message":"Waiting for somebody at the counter to allow this phone."}"""))
         assertEquals(Answer.Ok(null), link.pairStatus("h", 1, "0".repeat(64), "rq1"))
         server.once("GET", "/v1/pair/rq1", FakeServer.Reply(200, """{"device_id":"dev_9","secret":"s9","server_id":"srv_1"}"""))
@@ -134,10 +145,10 @@ class CounterLinkTest {
     }
 
     @Test fun a_batch_answers_per_intent() = runTest {
-        server.once("POST", "/v1/batch", FakeServer.Reply(200, """{"outcomes":[["a",{"outcome":"ok","order_id":"o","total":"1.00","lines":[],"token":null,"note":null}],["b",{"outcome":"held","message":"old","batch_id":"x"}]],"says":"1 of 2 went through."}"""))
-        val r = (link.batch(cred, listOf(Intent("a", null, 1, Ops.requestBill()), Intent("b", null, 1, Ops.requestBill()))) as Answer.Ok).value
+        server.once("POST", "/v1/batch", FakeServer.Reply(200, """{"outcomes":[["a",{"outcome":"ok","order_id":"o","total":"1.00","lines":[],"token":null,"note":null}],["b",{"outcome":"held","message":"old","batch_id":"x"}]],"says":"1 change is waiting for somebody at the counter to say whether they still apply."}"""))
+        val r = (link.batch(cred, listOf(Intent("a", null, 1, Ops.printBill()), Intent("b", null, 1, Ops.printBill()))) as Answer.Ok).value
         assertEquals(2, r.outcomes.size)
-        assertEquals("1 of 2 went through.", r.says)
+        assertTrue(r.says.startsWith("1 change is waiting"))
         assertTrue(r.outcomes[1].second is Outcome.Held)
     }
 }

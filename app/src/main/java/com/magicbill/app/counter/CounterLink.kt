@@ -1,16 +1,21 @@
 package com.magicbill.app.counter
 
 import com.magicbill.app.core.Answer
+import com.magicbill.app.core.Clock
 import com.magicbill.app.core.MbJson
 import com.magicbill.app.core.Sentences
 import com.magicbill.app.core.asObjectOrNull
+import com.magicbill.app.core.objects
 import com.magicbill.app.core.parseJsonOrNull
+import com.magicbill.app.core.str
 import com.magicbill.app.core.strOrNull
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
@@ -31,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap
 class CounterLink(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val clientFactory: (javax.net.ssl.X509TrustManager) -> OkHttpClient = ::defaultClient,
+    private val clock: Clock = Clock.system,
 ) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private val pinnedClients = ConcurrentHashMap<String, OkHttpClient>()
@@ -40,20 +46,29 @@ class CounterLink(
 
     data class Seen(val hello: Hello, val presentedFingerprint: String)
 
-    /** Over a connection that trusts nothing: what is answering there, and what certificate it showed. */
+    /**
+     * Over a connection that trusts nothing: what is answering there, and what certificate it
+     * showed. The very first packet to a counter often finds the phone's WiFi radio asleep, so
+     * a failure here is tried once more before it is called unreachable — the "scan again and
+     * it works" that every waiter learnt was this retry, done by hand.
+     */
     suspend fun helloUnpinned(host: String, port: Int): Answer<Seen> {
-        val recorder = RecordingTrust()
-        val client = clientFactory(recorder)
-        val wire = send(client, Request.Builder().url("https://$host:$port/v1/hello").header(VERSION_HEADER, PROTOCOL_VERSION).get().build())
-        return when (wire) {
-            is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
-            is Wire.Http -> {
-                if (wire.code != 200) return trouble(wire)
-                val hello = try { MbJson.decodeFromString(Hello.serializer(), wire.body) } catch (e: Exception) { return Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) }
-                val seen = recorder.seenFingerprint ?: return Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
-                Answer.Ok(Seen(hello, seen))
+        var last: Answer<Seen> = Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+        repeat(2) {
+            val recorder = RecordingTrust()
+            val client = clientFactory(recorder)
+            val wire = send(client, Request.Builder().url("https://$host:$port/v1/hello").header(VERSION_HEADER, PROTOCOL_VERSION).get().build())
+            last = when (wire) {
+                is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+                is Wire.Http -> {
+                    if (wire.code != 200) return trouble(wire)
+                    val hello = try { MbJson.decodeFromString(Hello.serializer(), wire.body) } catch (e: Exception) { return Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) }
+                    val seen = recorder.seenFingerprint ?: return Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+                    return Answer.Ok(Seen(hello, seen))
+                }
             }
         }
+        return last
     }
 
     /** Pinned `hello`, for "is the counter there?" after pairing. */
@@ -64,16 +79,38 @@ class CounterLink(
         } else trouble(wire)
     }
 
-    /** `POST /v1/pair` → the request id to poll. The certificate is already pinned by then. */
-    suspend fun pair(host: String, port: Int, fingerprint: String, name: String, token: String): Answer<String> {
+    /** `POST /v1/pair` → the request to claim, and the staff list to claim from. */
+    suspend fun pair(host: String, port: Int, fingerprint: String, name: String, token: String): Answer<Asked> {
         val body = buildJsonObject { put("name", name); put("platform", "android"); put("token", token) }
         val wire = send(pinned(fingerprint), plain("https://$host:$port/v1/pair").post(body.toString().toRequestBody(jsonType)).build())
         return when (wire) {
             is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
             is Wire.Http -> if (wire.code == 202) {
-                val id = parseJsonOrNull(wire.body)?.asObjectOrNull()?.strOrNull("request_id")
-                if (id == null) Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) else Answer.Ok(id)
+                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
+                val id = o?.strOrNull("request_id")
+                if (id == null) Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+                else Answer.Ok(Asked(id, (o["people"] ?: JsonNull).objects().map { Person(it.str("id"), it.str("name")) }))
             } else trouble(wire)
+        }
+    }
+
+    /**
+     * `POST /v1/pair/{id}/claim`: whose phone this is, with that person's PIN — a credential on
+     * the spot. Null [staffId] = a shared tablet, which stays in the counter's queue for Allow.
+     */
+    suspend fun claim(host: String, port: Int, fingerprint: String, requestId: String, staffId: String?, pin: String?): Answer<PairedDevice?> {
+        val body = buildJsonObject {
+            put("staff_id", staffId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("pin", pin?.let { JsonPrimitive(it) } ?: JsonNull)
+        }
+        val wire = send(pinned(fingerprint), plain("https://$host:$port/v1/pair/$requestId/claim").post(body.toString().toRequestBody(jsonType)).build())
+        return when (wire) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+            is Wire.Http -> when (wire.code) {
+                200 -> try { Answer.Ok(MbJson.decodeFromString(PairedDevice.serializer(), wire.body)) } catch (e: Exception) { Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) }
+                202 -> Answer.Ok(null)
+                else -> trouble(wire)
+            }
         }
     }
 
@@ -112,9 +149,10 @@ class CounterLink(
         when (a) { is Answer.Ok -> a.value.asObjectOrNull()?.let { Answer.Ok(it) } ?: Answer.Unreachable(Sentences.COUNTER_UNREACHABLE); is Answer.Refused -> a; is Answer.Unreachable -> a; is Answer.SignedOut -> a }
     }
 
-    /** One intent. 200/409/202 all carry an outcome; the outcome is the answer, the status is not. */
+    /** One intent, stamped with the moment it leaves. 200/409/202 all carry an outcome; the outcome is the answer, the status is not. */
     suspend fun intent(cred: Credential, intent: Intent): Answer<Outcome> {
-        val wire = send(pinned(cred.fingerprint), signed(cred, "/v1/intent").post(intent.toJson().toString().toRequestBody(jsonType)).build())
+        val stamped = intent.copy(sentAt = clock.now())
+        val wire = send(pinned(cred.fingerprint), signed(cred, "/v1/intent").post(stamped.toJson().toString().toRequestBody(jsonType)).build())
         return when (wire) {
             is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
             is Wire.Http -> {
@@ -125,7 +163,8 @@ class CounterLink(
     }
 
     suspend fun batch(cred: Credential, intents: List<Intent>): Answer<BatchResult> {
-        val body = buildJsonObject { put("intents", JsonArray(intents.map { it.toJson() })) }
+        val now = clock.now()
+        val body = buildJsonObject { put("intents", JsonArray(intents.map { it.copy(sentAt = now).toJson() })) }
         val wire = send(pinned(cred.fingerprint), signed(cred, "/v1/batch").post(body.toString().toRequestBody(jsonType)).build(), long = true)
         return when (wire) {
             is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
@@ -194,10 +233,11 @@ class CounterLink(
 
         fun defaultClient(trust: javax.net.ssl.X509TrustManager): OkHttpClient = OkHttpClient.Builder()
             .trusting(trust)
-            .connectTimeout(Duration.ofSeconds(3))
+            // Five seconds to connect: a phone radio waking from doze takes more than three.
+            .connectTimeout(Duration.ofSeconds(5))
             .readTimeout(Duration.ofSeconds(6))
             .writeTimeout(Duration.ofSeconds(6))
-            .callTimeout(Duration.ofSeconds(8))
+            .callTimeout(Duration.ofSeconds(10))
             .retryOnConnectionFailure(true)
             .build()
     }
