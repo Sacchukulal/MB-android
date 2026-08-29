@@ -1,6 +1,5 @@
 package com.magicbill.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalContentColor
@@ -68,22 +67,17 @@ private fun schemeOf(c: MbColors): ColorScheme = if (c.isDark) {
 
 /** Material's typography, from the type scale — so a Material component's text is ours too. */
 private fun typographyOf(t: MbType): Typography = Typography(
-    displayLarge = t.hero, displayMedium = t.hero, displaySmall = t.hero,
+    displayLarge = t.hero, displayMedium = t.hero, displaySmall = t.brand,
     headlineLarge = t.page, headlineMedium = t.page, headlineSmall = t.page,
-    titleLarge = t.stat, titleMedium = t.section, titleSmall = t.label,
-    bodyLarge = t.body, bodyMedium = t.caption, bodySmall = t.caption,
-    labelLarge = t.button, labelMedium = t.label, labelSmall = t.label,
+    titleLarge = t.stat, titleMedium = t.section, titleSmall = t.statSmall,
+    bodyLarge = t.body, bodyMedium = t.cell, bodySmall = t.caption,
+    labelLarge = t.button, labelMedium = t.label, labelSmall = t.navLabel,
 )
 
 @Composable
-fun MagicBillTheme(mode: String, textScale: Float = 1f, content: @Composable () -> Unit) {
-    val dark = when (mode) {
-        ThemeControllerModes.DARK -> true
-        ThemeControllerModes.LIGHT -> false
-        else -> isSystemInDarkTheme()
-    }
+fun MagicBillTheme(dark: Boolean, content: @Composable () -> Unit) {
     val colors = if (dark) DarkColors else LightColors
-    val mb = MbTheme(colors, MbType(textScale))
+    val mb = MbTheme(colors, MbType())
     // Status and navigation bar icons follow the APP's theme, not the OS setting: bare
     // edge-to-edge left white icons on a white system theme over navy.
     val view = androidx.compose.ui.platform.LocalView.current
@@ -105,12 +99,6 @@ fun MagicBillTheme(mode: String, textScale: Float = 1f, content: @Composable () 
             }
         }
     }
-}
-
-object ThemeControllerModes {
-    const val SYSTEM = "system"
-    const val LIGHT = "light"
-    const val DARK = "dark"
 }
 
 @Composable

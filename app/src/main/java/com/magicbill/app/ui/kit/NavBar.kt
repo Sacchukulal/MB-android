@@ -29,15 +29,18 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
 
-data class PillNavItem(val label: String, val icon: ImageVector, val showDot: Boolean = false)
+/** One tab: its outlined icon, the filled one it becomes when chosen, and a dot for news. */
+data class PillNavItem(val label: String, val icon: ImageVector, val selectedIcon: ImageVector = icon, val showDot: Boolean = false)
 
 /**
  * The floating pill navigation — detached from the edge, rounded, softly raised. Selection
- * animates: the icon pops on a spring, a small dot slides in under the active tab.
+ * animates: the icon fills and pops on a spring, a small dot slides in under the active tab.
+ * Five tabs, always; the labels are the nav size, so five fit on a narrow phone.
  */
 @Composable
 fun PillNavBar(items: List<PillNavItem>, selectedIndex: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
@@ -68,10 +71,10 @@ fun PillNavBar(items: List<PillNavItem>, selectedIndex: Int, onSelect: (Int) -> 
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Box {
-                        Icon(item.icon, contentDescription = item.label, tint = tint, modifier = Modifier.size(24.dp).scale(scale))
+                        Icon(if (selected) item.selectedIcon else item.icon, contentDescription = item.label, tint = tint, modifier = Modifier.size(24.dp).scale(scale))
                         if (item.showDot) Box(Modifier.align(Alignment.TopEnd).size(7.dp).background(c.warn, CircleShape))
                     }
-                    Text(item.label, style = Mb.type.label, color = tint)
+                    Text(item.label, style = Mb.type.navLabel, color = tint, maxLines = 1, overflow = TextOverflow.Clip, softWrap = false)
                     Box(Modifier.padding(top = 2.dp).size(dotSize).background(c.accent, CircleShape))
                 }
             }

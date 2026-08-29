@@ -29,7 +29,8 @@ import java.io.IOException
 /**
  * The one HTTP client for the cloud (PHONE_API.md). Two auth endpoints, PostgREST RPC and
  * REST, one refresh on a 401, and nothing else. Every call has a deadline from the client;
- * every reply becomes an [Answer]. Nothing metered is called from here except `staff-login`.
+ * every reply becomes an [Answer]. Nothing metered is called from here at all: a staff phone's
+ * login is fetched by the counter and only kept here.
  */
 class CloudLink(
     private val baseUrl: String,
@@ -62,40 +63,22 @@ class CloudLink(
         }
     }
 
-    /** Once per install per person (the one metered call). */
-    suspend fun staffLogin(restaurantCode: String, staffCode: String, pin: String, machineId: String, machineName: String, appVersion: String): Answer<CloudSession> {
-        val body = buildJsonObject {
-            put("restaurant_code", restaurantCode.trim().uppercase())
-            put("staff_code", staffCode.trim().uppercase())
-            put("pin", pin)
-            put("machine", buildJsonObject { put("id", machineId); put("name", machineName) })
-            put("app_version", appVersion)
-        }
-        val wire = send(anonRequest("$baseUrl/functions/v1/staff-login").post(body.toString().toRequestBody(jsonType)).build())
-        return when (wire) {
-            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-            is Wire.Http -> {
-                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
-                when {
-                    wire.code == 200 && o != null -> {
-                        val sess = o.obj("session") ?: return Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-                        val r = o.obj("restaurant")
-                        val st = o.obj("staff")
-                        val s = sessionFrom(
-                            sess, CloudSession.Kind.STAFF,
-                            staff = StaffIdentity(r?.str("id") ?: "", r?.str("name") ?: "", r?.str("short_code") ?: "", st?.str("id") ?: "", st?.str("name") ?: ""),
-                            deviceId = o.strOrNull("device_id"),
-                        )
-                        sessions.save(s)
-                        Answer.Ok(s)
-                    }
-                    wire.code == 401 -> Answer.Refused("The restaurant code, staff code and PIN do not match.", "not_recognised")
-                    wire.code == 429 -> Answer.Refused(tooManySentence(wire.retryAfter), "too_many", wire.retryAfter)
-                    o != null && o.strOrNull("message") != null -> Answer.Refused(o.str("message"), o.strOrNull("code"))
-                    else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-                }
-            }
-        }
+    /**
+     * The login the COUNTER fetched for this phone's person (`POST /v1/cloud-login` on the LAN;
+     * the cloud's `phone-session` reply, passed through). Kept as a staff session. Null when
+     * the reply has no session in it.
+     */
+    fun adoptCounterLogin(o: JsonObject): CloudSession? {
+        val sess = o.obj("session") ?: return null
+        val r = o.obj("restaurant")
+        val st = o.obj("staff")
+        val s = sessionFrom(
+            sess, CloudSession.Kind.STAFF,
+            staff = StaffIdentity(r?.str("id") ?: "", r?.str("name") ?: "", r?.str("short_code") ?: "", st?.str("id") ?: "", st?.str("name") ?: ""),
+            deviceId = o.strOrNull("device_id"),
+        )
+        sessions.save(s)
+        return s
     }
 
     suspend fun signOut() {

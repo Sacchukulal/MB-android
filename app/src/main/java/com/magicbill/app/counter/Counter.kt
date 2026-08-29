@@ -9,15 +9,16 @@ import com.magicbill.app.prefs.Secure
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * This phone's link to a counter: the credential, who we are there, and pairing. Pairing is
  * LAN_PROTOCOL.md §3, in order: hello over a connection that trusts nothing → compare what was
- * presented with the QR → pin → present the token → the person names themselves and proves it
- * with their PIN (or a shared tablet waits for somebody to press Allow) → keep the secret
- * (shown once) in the keystore-backed box.
+ * presented with the QR → pin → present the token → wait while somebody at the counter says
+ * whose phone this is and presses Allow → keep the secret (shown once) in the keystore-backed
+ * box. The phone types nothing and picks nothing: the counter decides.
  */
 @Singleton
 class Counter @Inject constructor(
@@ -40,27 +41,32 @@ class Counter @Inject constructor(
     /** Off the main thread, once, at start. */
     fun load() {
         cred.value = secure.get(Secure.COUNTER_CREDENTIAL)?.let { try { MbJson.decodeFromString(Credential.serializer(), it) } catch (e: Exception) { null } }
-        meState.value = secure.get(ME)?.let { try { com.magicbill.app.core.parseJsonOrNull(it)?.let { j -> Me.parse(j as kotlinx.serialization.json.JsonObject) } } catch (e: Exception) { null } }
+        meState.value = secure.get(ME)?.let { try { com.magicbill.app.core.parseJsonOrNull(it)?.let { j -> Me.parse(j as JsonObject) } } catch (e: Exception) { null } }
     }
 
-    /** A code presented and accepted: the counter's name, the request to claim, and who it could be for. */
-    data class Presented(val code: PairCode, val shopName: String, val asked: Asked)
+    /** A code presented and accepted: the counter's name and the request the counter is deciding on. */
+    data class Presented(val code: PairCode, val shopName: String, val requestId: String)
 
     /**
      * Step one: present the code. Checks the counter is the one on the code, pins it, and
-     * presents the token. Nothing is issued yet — the person still has to say who they are.
+     * presents the token. Nothing is issued yet — somebody at the counter has to press Allow.
      */
-    suspend fun present(code: PairCode, phoneName: String): Answer<Presented> {
+    suspend fun present(code: PairCode, phoneName: String, install: String): Answer<Presented> {
         val seen = when (val a = link.helloUnpinned(code.host, code.port)) {
             is Answer.Ok -> a.value
             is Answer.Refused -> return a
-            is Answer.Unreachable -> return a
+            // The address is known here, so say it — and name the usual reason, which is the
+            // counter's own firewall, not this phone's WiFi.
+            is Answer.Unreachable -> return Answer.Unreachable(
+                "The counter at ${code.host}:${code.port} did not answer. On the counter, open " +
+                    "Settings › Phones — it says if Windows Firewall is blocking it.",
+            )
             is Answer.SignedOut -> return a
         }
         if (!Fingerprints.same(seen.presentedFingerprint, code.fingerprint)) {
             return Answer.Refused("That is not the till on the code.")
         }
-        return when (val a = link.pair(code.host, code.port, code.fingerprint, phoneName, code.token)) {
+        return when (val a = link.pair(code.host, code.port, code.fingerprint, phoneName, code.token, install)) {
             is Answer.Ok -> Answer.Ok(Presented(code, seen.hello.shopName, a.value))
             is Answer.Refused -> a
             is Answer.Unreachable -> a
@@ -68,42 +74,33 @@ class Counter @Inject constructor(
         }
     }
 
-    /** Step two, a person: their name and their PIN. A credential on the spot. */
-    suspend fun claim(presented: Presented, staffId: String, pin: String): Answer<Credential> {
-        val code = presented.code
-        return when (val a = link.claim(code.host, code.port, code.fingerprint, presented.asked.requestId, staffId, pin)) {
-            is Answer.Ok -> a.value?.let { Answer.Ok(keepPaired(code, presented.shopName, it)) }
-                ?: Answer.Refused("The counter did not let this phone in. Try again.")
-            is Answer.Refused -> a
-            is Answer.Unreachable -> a
-            is Answer.SignedOut -> a
-        }
-    }
-
     /**
-     * Step two, a shared tablet: nobody's, so somebody at the counter has five minutes to press
-     * Allow. [onWaiting] tells the screen the wait has begun.
+     * Step two: wait. Somebody at the counter has five minutes to say whose phone this is and
+     * press Allow. [onWaiting] tells the screen the wait has begun.
      */
     suspend fun waitForAllow(presented: Presented, onWaiting: () -> Unit): Answer<Credential> {
         val code = presented.code
-        when (val a = link.claim(code.host, code.port, code.fingerprint, presented.asked.requestId, null, null)) {
-            is Answer.Ok -> a.value?.let { return Answer.Ok(keepPaired(code, presented.shopName, it)) }
-            is Answer.Refused -> return a
-            is Answer.Unreachable -> return a
-            is Answer.SignedOut -> return a
-        }
         onWaiting()
         val deadline = clock.now() + 5 * 60_000
         while (true) {
-            if (clock.now() > deadline) return Answer.Refused("Nobody at the counter pressed Allow in five minutes. Scan the code again.")
-            delay(1_500)
-            when (val a = link.pairStatus(code.host, code.port, code.fingerprint, presented.asked.requestId)) {
+            when (val a = link.pairStatus(code.host, code.port, code.fingerprint, presented.requestId)) {
                 is Answer.Ok -> a.value?.let { return Answer.Ok(keepPaired(code, presented.shopName, it)) }
                 is Answer.Refused -> return a
                 is Answer.Unreachable -> {} // a blip while waiting is not a refusal
                 is Answer.SignedOut -> return a
             }
+            if (clock.now() > deadline) return Answer.Refused("Nobody at the counter pressed Allow in five minutes. Scan the code again.")
+            delay(1_500)
         }
+    }
+
+    /**
+     * The phone's login to the cloud, from the counter — for the person the counter bound this
+     * phone to. The counter's (or the cloud's) sentence comes back as-is when it cannot.
+     */
+    suspend fun cloudLogin(): Answer<JsonObject> {
+        val c = cred.value ?: return Answer.SignedOut(Sentences.NOT_PAIRED)
+        return link.cloudLogin(c)
     }
 
     private suspend fun keepPaired(code: PairCode, shopName: String, paired: PairedDevice): Credential {
@@ -136,7 +133,18 @@ class Counter @Inject constructor(
         return true
     }
 
-    /** The person chose to leave this counter. */
+    /** The person chose to leave this counter: tell it (so the seat is free), then forget it. */
+    suspend fun leave() {
+        cred.value?.let { c ->
+            when (val a = link.leave(c)) {
+                is Answer.Ok, is Answer.SignedOut -> {}
+                else -> android.util.Log.w("MagicBill", "leaving the counter: ${a.sentenceOrNull}")
+            }
+        }
+        forget()
+    }
+
+    /** The counter forgot this phone (or never knew it): drop the credential. */
     fun forget() {
         secure.remove(Secure.COUNTER_CREDENTIAL)
         secure.remove(ME)
@@ -158,6 +166,7 @@ class Counter @Inject constructor(
         put("device_id", kotlinx.serialization.json.JsonPrimitive(me.deviceId))
         put("name", kotlinx.serialization.json.JsonPrimitive(me.name))
         put("staff_id", me.staffId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+        put("staff_name", me.staffName?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
         put("may", kotlinx.serialization.json.JsonArray(me.may.map { kotlinx.serialization.json.JsonPrimitive(it) }))
     }.toString()
 

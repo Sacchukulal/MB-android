@@ -1,11 +1,14 @@
 package com.magicbill.app.ui.screens.signin
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,9 +30,7 @@ import com.magicbill.app.R
 import com.magicbill.app.ui.kit.Field
 import com.magicbill.app.ui.kit.Notice
 import com.magicbill.app.ui.kit.Page
-import com.magicbill.app.ui.kit.PinField
 import com.magicbill.app.ui.kit.PrimaryButton
-import com.magicbill.app.ui.kit.QuietButton
 import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
@@ -37,21 +38,24 @@ import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.Mb
 import com.magicbill.app.ui.theme.Space
 
+/** First screen: the brand on the glowing canvas, two clear doors. Nothing else. */
 @Composable
-fun WelcomeScreen(onOwner: () -> Unit, onStaff: () -> Unit, onPair: () -> Unit) {
+fun WelcomeScreen(onOwner: () -> Unit, onStaff: () -> Unit) {
     Page(null, scroll = true) {
-        Column(Modifier.fillMaxWidth().padding(top = Space.s7), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Gap.field)) {
-            Image(painterResource(R.drawable.splashscreen_logo), contentDescription = null, modifier = Modifier.size(96.dp))
-            Text("Magic Bill", style = Mb.type.page, color = Mb.colors.ink)
+        Column(Modifier.fillMaxWidth().padding(top = Space.s7 + Space.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Gap.field)) {
+            Box(Modifier.size(120.dp).background(Mb.colors.accent.copy(alpha = 0.10f), CircleShape), contentAlignment = Alignment.Center) {
+                Image(painterResource(R.drawable.splashscreen_logo), contentDescription = "Magic Bill", modifier = Modifier.size(84.dp))
+            }
+            VGap(Gap.field)
+            Text("Magic Bill", style = Mb.type.brand, color = Mb.colors.ink)
             Text("Your shop, in your pocket.", style = Mb.type.body, color = Mb.colors.inkMuted, textAlign = TextAlign.Center)
         }
-        VGap(Space.s7)
+        VGap(Space.s7 + Space.s6)
         PrimaryButton("I own the shop", onOwner, Modifier.fillMaxWidth())
         VGap(Gap.field)
         SecondaryButton("I work here", onStaff, Modifier.fillMaxWidth())
         VGap(Gap.group)
-        Text("Taking orders at the tables?", style = Mb.type.caption, color = Mb.colors.inkMuted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        QuietButton("Connect this phone to the counter", onPair, Modifier.fillMaxWidth())
+        Text("Staff: scan the code on the counter's screen. The owner or manager lets you in.", style = Mb.type.caption, color = Mb.colors.inkMuted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
@@ -78,29 +82,5 @@ fun OwnerSignInScreen(back: () -> Unit, done: () -> Unit, vm: SignInViewModel = 
         } else {
             PrimaryButton("Sign in", { tried = true; if (emailOk && password.isNotEmpty()) vm.owner(email, password) }, Modifier.fillMaxWidth(), busy = state.busy)
         }
-    }
-}
-
-@Composable
-fun StaffSignInScreen(back: () -> Unit, done: () -> Unit, vm: SignInViewModel = hiltViewModel()) {
-    val state by vm.state.collectAsStateWithLifecycle()
-    var shop by rememberSaveable { mutableStateOf("") }
-    var code by rememberSaveable { mutableStateOf("") }
-    var pin by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(state.done) { if (state.done) done() }
-    val ready = shop.length == 6 && code.isNotBlank() && pin.length == 4
-
-    Page("Sign in", "The shop code is on the owner's Account screen", back = back) {
-        VGap(Gap.group)
-        Field(shop, { shop = it.filter { c -> c.isLetterOrDigit() }.uppercase().take(6) }, "Shop code", placeholder = "K7M2QX", capitalise = true)
-        VGap(Gap.field)
-        Field(code, { code = it.uppercase().take(12) }, "Your staff code", placeholder = "RAVI", capitalise = true, ime = ImeAction.Done)
-        VGap(Gap.group)
-        Text("Your PIN — the same one as at the counter", style = Mb.type.label, color = Mb.colors.inkMuted)
-        VGap(Gap.field)
-        PinField(pin, { pin = it }, onDone = { if (ready) vm.staff(shop, code, pin) })
-        VGap(Gap.group)
-        if (state.sentence != null) { Notice(Tone.Danger, state.sentence!!); VGap(Gap.field) }
-        PrimaryButton("Sign in", { if (ready) vm.staff(shop, code, pin) }, Modifier.fillMaxWidth(), enabled = ready, busy = state.busy)
     }
 }

@@ -70,16 +70,10 @@ data class PairedDevice(
     @SerialName("server_id") val serverId: String,
 )
 
-/** Somebody on the staff list a phone can belong to (LAN_PROTOCOL.md §3). */
-data class Person(val id: String, val name: String)
-
-/** The counter's answer to a presented code: the request to claim, and who it could be for. */
-data class Asked(val requestId: String, val people: List<Person>)
-
 /** `GET /v1/me`: who this phone is at the counter, and what its person may do there. */
-data class Me(val deviceId: String, val name: String, val staffId: String?, val may: Set<String>) {
+data class Me(val deviceId: String, val name: String, val staffId: String?, val may: Set<String>, val staffName: String? = null) {
     companion object {
-        fun parse(o: JsonObject) = Me(o.str("device_id"), o.str("name"), o.strOrNull("staff_id"), o.strings("may").toSet())
+        fun parse(o: JsonObject) = Me(o.str("device_id"), o.str("name"), o.strOrNull("staff_id"), o.strings("may").toSet(), o.strOrNull("staff_name"))
     }
 }
 

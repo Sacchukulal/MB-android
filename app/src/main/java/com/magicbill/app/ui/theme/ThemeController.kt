@@ -6,29 +6,26 @@ import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The theme setting: follow the phone, or one of the two. Persisted. Light + dark both ship. */
+/**
+ * The theme setting: dark or light, nothing else. Dark is the default (dim restaurants); light is
+ * opt-in, from the sun/moon on the Account screen. Persisted. There is no text-size setting: the
+ * one scale in Tokens.kt is the product.
+ */
 @Singleton
 class ThemeController @Inject constructor(private val plain: Plain) {
-    private val modeState = MutableStateFlow(plain.get(Plain.THEME) ?: SYSTEM)
-    private val scaleState = MutableStateFlow(plain.get(Plain.TEXT_SIZE)?.toFloatOrNull() ?: 1f)
+    private val darkState = MutableStateFlow(plain.get(Plain.THEME) != LIGHT)
 
-    val mode: StateFlow<String> get() = modeState
-    val textScale: StateFlow<Float> get() = scaleState
+    val dark: StateFlow<Boolean> get() = darkState
 
-    fun setMode(mode: String) {
-        modeState.value = mode
-        plain.put(Plain.THEME, mode)
+    fun setDark(dark: Boolean) {
+        darkState.value = dark
+        plain.put(Plain.THEME, if (dark) DARK else LIGHT)
     }
 
-    fun setTextScale(scale: Float) {
-        val s = scale.coerceIn(0.9f, 1.3f)
-        scaleState.value = s
-        plain.put(Plain.TEXT_SIZE, s.toString())
-    }
+    fun toggle() = setDark(!darkState.value)
 
     companion object {
-        const val SYSTEM = ThemeControllerModes.SYSTEM
-        const val LIGHT = ThemeControllerModes.LIGHT
-        const val DARK = ThemeControllerModes.DARK
+        const val LIGHT = "light"
+        const val DARK = "dark"
     }
 }

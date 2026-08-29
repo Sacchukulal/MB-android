@@ -58,9 +58,9 @@ class StaffEditViewModel @Inject constructor(saved: SavedStateHandle, private va
     val id: String? = saved.toRoute<StaffEdit>().id
 
     data class Form(
-        val name: String = "", val code: String = "", val phone: String = "", val roleId: String? = null, val status: String = "active",
+        val name: String = "", val phone: String = "", val roleId: String? = null, val status: String = "active",
         val designation: String = "", val department: String = "", val employmentType: String = "full_time", val joinedOn: String = "",
-        val leftOn: String = "", val isRider: Boolean = false, val canLoginOnPhone: Boolean = false, val loaded: Boolean = false,
+        val leftOn: String = "", val isRider: Boolean = false, val loaded: Boolean = false,
     )
 
     private val formFlow = MutableStateFlow(Form(loaded = id == null))
@@ -79,8 +79,8 @@ class StaffEditViewModel @Inject constructor(saved: SavedStateHandle, private va
     }
 
     private fun fromRow(s: StaffRow) = Form(
-        s.name, s.code ?: "", s.phone ?: "", s.roleId, s.status, s.designation ?: "", s.department ?: "", s.employmentType.ifBlank { "full_time" },
-        s.joinedOn ?: "", s.leftOn ?: "", s.isRider, s.canLoginOnPhone, loaded = true,
+        s.name, s.phone ?: "", s.roleId, s.status, s.designation ?: "", s.department ?: "", s.employmentType.ifBlank { "full_time" },
+        s.joinedOn ?: "", s.leftOn ?: "", s.isRider, loaded = true,
     )
 
     fun update(f: (Form) -> Form) { formFlow.value = f(formFlow.value) }
@@ -93,14 +93,13 @@ class StaffEditViewModel @Inject constructor(saved: SavedStateHandle, private va
         viewModelScope.launch {
             val body = buildJsonObject {
                 if (id != null) put("id", id)
-                put("name", f.name.trim()); put("code", f.code.trim().uppercase().ifBlank { null }?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("name", f.name.trim())
                 put("phone", f.phone.trim().ifBlank { null }?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("role_id", f.roleId?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("status", f.status); put("designation", f.designation.trim()); put("department", f.department.trim())
                 put("is_rider", f.isRider); put("employment_type", f.employmentType)
                 put("joined_on", f.joinedOn.trim().ifBlank { null }?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("left_on", if (f.status == "left") f.leftOn.trim().ifBlank { java.time.LocalDate.now(com.magicbill.app.core.Ist.zone).toString() }.let { JsonPrimitive(it) } else JsonNull)
-                put("can_login_on_phone", f.canLoginOnPhone)
             }
             when (val a = people.saveStaff(r, body)) {
                 is Answer.Ok -> { stateFlow.value = false to null; done() }
@@ -150,7 +149,6 @@ fun StaffEditScreen(back: () -> Unit, vm: StaffEditViewModel = hiltViewModel()) 
         VGap(Gap.field)
         Field(f.name, { v -> vm.update { it.copy(name = v) } }, "Name")
         VGap(Gap.field)
-        Field(f.code, { v -> vm.update { it.copy(code = v.uppercase().take(12)) } }, "Staff code", placeholder = "RAVI", capitalise = true)
         VGap(Gap.field)
         Field(f.phone, { v -> vm.update { it.copy(phone = v.filter { c -> c.isDigit() }.take(10)) } }, "Mobile", keyboard = KeyboardType.Phone, placeholder = "10 digits")
         Section("Role")
@@ -171,8 +169,7 @@ fun StaffEditScreen(back: () -> Unit, vm: StaffEditViewModel = hiltViewModel()) 
             Field(f.leftOn, { v -> vm.update { it.copy(leftOn = v.take(10)) } }, "Left on", placeholder = "today", keyboard = KeyboardType.Number)
         }
         SwitchRow("Delivers orders (rider)", null, f.isRider) { v -> vm.update { it.copy(isRider = v) } }
-        Section("The phone")
-        SwitchRow("Can sign in on a phone", "With the shop code, their staff code and PIN", f.canLoginOnPhone) { v -> vm.update { it.copy(canLoginOnPhone = v) } }
+        Section("The counter PIN")
         if (vm.id != null) {
             VGap(Gap.field)
             SecondaryButton("Set a new PIN", { pinSheet = true }, Modifier.fillMaxWidth())

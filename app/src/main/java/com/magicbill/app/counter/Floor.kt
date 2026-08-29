@@ -338,7 +338,7 @@ class Floor @Inject constructor(
     suspend fun forgetAll() {
         db.floor().replaceCatalogue(emptyList(), emptyList())
         db.floor().clearOrders()
-        counter.forget()
+        counter.leave()
     }
 
     companion object {

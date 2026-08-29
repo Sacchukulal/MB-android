@@ -13,6 +13,10 @@ import com.magicbill.app.R
  * THE ONE FILE THAT DECIDES WHAT THE PHONE LOOKS LIKE — the scales. They do not change between
  * themes: a theme is a palette, not a different product. Spacing and type are by JOB, never by
  * number, so a screen says "the gap between two sections" and not "24".
+ *
+ * The type scale is v2.4.6's, the one the owner signed off: a 45sp extra-bold hero, a 24sp
+ * page title, 16sp body, 14sp rows, 12sp small print, 11sp nav labels. There is ONE size; no
+ * text-size setting multiplies it.
  */
 
 object Space {
@@ -36,7 +40,7 @@ object Gap {
     /** Between two sections of a page. */
     val section = Space.s6
     /** The page's own margin, all four sides. */
-    val page = Space.s4
+    val page = 20.dp
 }
 
 /** "Middle": modest, not soft, not sharp. */
@@ -77,35 +81,38 @@ val Inter = FontFamily(
     Font(R.font.inter_medium, FontWeight.Medium),
     Font(R.font.inter_semibold, FontWeight.SemiBold),
     Font(R.font.inter_bold, FontWeight.Bold),
+    Font(R.font.inter_extrabold, FontWeight.ExtraBold),
 )
 
-/**
- * Type by job. `scale` is the one text-size setting and multiplies everything, so it reaches
- * every screen at once. Numbers that align are tabular; prose is never mono.
- */
+/** Type by job. Numbers that align are tabular; prose is never mono. */
 @Immutable
-class MbType(val scale: Float = 1f) {
-    private fun s(n: Float) = (n * scale).sp
+class MbType {
     private val tabular = "tnum"
 
-    /** The page title. */
-    val page = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = s(23f), lineHeight = s(28f), letterSpacing = (-0.2).sp)
-    /** A section heading. */
-    val section = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = s(16f), lineHeight = s(22f))
-    /** A field's label, a column heading. */
-    val label = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = s(13f), lineHeight = s(18f), letterSpacing = 0.2.sp)
-    /** Running text and the name on a row. */
-    val body = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = s(16f), lineHeight = s(22f))
-    /** A number in a row that must line up with the number above it. */
-    val cell = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = s(15f), lineHeight = s(20f), fontFeatureSettings = tabular)
-    /** The small line under a row, a timestamp, a hint. */
-    val caption = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = s(13f), lineHeight = s(18f))
-    /** The one big rupee figure on a screen. */
-    val hero = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = s(34f), lineHeight = s(40f), letterSpacing = (-0.5).sp, fontFeatureSettings = tabular)
-    /** A figure in a tile. */
-    val stat = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = s(22f), lineHeight = s(28f), fontFeatureSettings = tabular)
-    /** A button. */
-    val button = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = s(15f), lineHeight = s(20f))
-    /** A code somebody types from a screen: the shop code, a pairing code. */
-    val code = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = s(20f), lineHeight = s(28f), letterSpacing = 2.sp)
+    /** The page title (v1 headlineSmall). */
+    val page = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 32.sp)
+    /** A section heading, a row's title when it leads (v1 titleMedium). */
+    val section = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.15.sp)
+    /** A field's label, a column heading, an overline (v1 labelMedium). */
+    val label = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.3.sp)
+    /** The label under a nav icon (v1 labelSmall). */
+    val navLabel = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.3.sp)
+    /** Running text and the name on a row (v1 bodyLarge). */
+    val body = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.15.sp)
+    /** A number in a row that must line up with the number above it (v1 bodyMedium, tabular). */
+    val cell = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp, fontFeatureSettings = tabular)
+    /** The small line under a row, a timestamp, a hint (v1 bodySmall). */
+    val caption = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.2.sp)
+    /** The one big rupee figure on a screen (v1 displayMedium). */
+    val hero = TextStyle(fontFamily = Inter, fontWeight = FontWeight.ExtraBold, fontSize = 45.sp, lineHeight = 52.sp, fontFeatureSettings = tabular)
+    /** A figure in a tile (v1 titleLarge). */
+    val stat = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp, fontFeatureSettings = tabular)
+    /** A small figure beside a row, an insight value (v1 titleSmall). */
+    val statSmall = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp, fontFeatureSettings = tabular)
+    /** A button (v1 labelLarge). */
+    val button = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp)
+    /** The brand name on the welcome screen (v1 displaySmall). */
+    val brand = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 44.sp)
+    /** A code somebody types from a screen: the pairing code, the shop code. */
+    val code = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 20.sp, lineHeight = 28.sp, letterSpacing = 2.sp)
 }

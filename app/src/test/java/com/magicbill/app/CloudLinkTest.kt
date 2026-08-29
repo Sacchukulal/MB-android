@@ -104,20 +104,14 @@ class CloudLinkTest {
         assertEquals("a", sessions.current()?.accessToken)
     }
 
-    @Test fun staff_login_is_the_one_metered_call_and_keeps_who_you_are() = runTest {
-        server.once("POST", "/functions/v1/staff-login", FakeServer.Reply(200, """{"session":{"access_token":"s","refresh_token":"sr","expires_in":3600},"device_id":"d1","restaurant":{"id":"r1","name":"Anna's","short_code":"K7M2QX"},"staff":{"id":"st1","name":"Ravi"}}"""))
-        val ok = link.staffLogin("k7m2qx", "ravi", "1234", "inst-1", "Ravi's phone", "3.0.0") as Answer.Ok
-        assertEquals(CloudSession.Kind.STAFF, ok.value.kind)
-        assertEquals("Ravi", ok.value.staff?.staffName)
-        assertEquals("d1", ok.value.deviceId)
-        assertTrue(server.sent.single().body.contains("\"restaurant_code\":\"K7M2QX\""))
-
-        server.once("POST", "/functions/v1/staff-login", FakeServer.Reply(403, """{"code":"refused","message":"Ravi cannot sign in on a phone. Ask the owner."}"""))
-        val refused = link.staffLogin("K7M2QX", "RAVI", "1234", "inst-1", "p", "3.0.0")
-        assertEquals(Answer.Refused("Ravi cannot sign in on a phone. Ask the owner.", "refused"), refused)
-
-        server.once("POST", "/functions/v1/staff-login", FakeServer.Reply(401, """{"code":"not_recognised"}"""))
-        val bad = link.staffLogin("K7M2QX", "RAVI", "0000", "inst-1", "p", "3.0.0") as Answer.Refused
-        assertEquals("not_recognised", bad.code)
+    @Test fun a_login_the_counter_fetched_is_kept_as_a_staff_session_without_a_call() = runTest {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement("""{"session":{"access_token":"s","refresh_token":"sr","expires_in":3600},"device_id":"d1","restaurant":{"id":"r1","name":"Anna's","short_code":"K7M2QX"},"staff":{"id":"st1","name":"Ravi"}}""") as kotlinx.serialization.json.JsonObject
+        val ok = link.adoptCounterLogin(o)!!
+        assertEquals(CloudSession.Kind.STAFF, ok.kind)
+        assertEquals("Ravi", ok.staff?.staffName)
+        assertEquals("d1", ok.deviceId)
+        assertEquals("s", sessions.current()?.accessToken)
+        assertTrue("the phone made no call of its own", server.sent.isEmpty())
+        assertNull(link.adoptCounterLogin(kotlinx.serialization.json.buildJsonObject { }))
     }
 }

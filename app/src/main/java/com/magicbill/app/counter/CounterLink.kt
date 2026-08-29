@@ -80,37 +80,16 @@ class CounterLink(
     }
 
     /** `POST /v1/pair` → the request to claim, and the staff list to claim from. */
-    suspend fun pair(host: String, port: Int, fingerprint: String, name: String, token: String): Answer<Asked> {
-        val body = buildJsonObject { put("name", name); put("platform", "android"); put("token", token) }
+    /** `POST /v1/pair`: the request the counter is now deciding on. */
+    suspend fun pair(host: String, port: Int, fingerprint: String, name: String, token: String, install: String): Answer<String> {
+        val body = buildJsonObject { put("name", name); put("platform", "android"); put("token", token); put("install", install) }
         val wire = send(pinned(fingerprint), plain("https://$host:$port/v1/pair").post(body.toString().toRequestBody(jsonType)).build())
         return when (wire) {
             is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
             is Wire.Http -> if (wire.code == 202) {
-                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
-                val id = o?.strOrNull("request_id")
-                if (id == null) Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
-                else Answer.Ok(Asked(id, (o["people"] ?: JsonNull).objects().map { Person(it.str("id"), it.str("name")) }))
+                val id = parseJsonOrNull(wire.body)?.asObjectOrNull()?.strOrNull("request_id")
+                if (id == null) Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) else Answer.Ok(id)
             } else trouble(wire)
-        }
-    }
-
-    /**
-     * `POST /v1/pair/{id}/claim`: whose phone this is, with that person's PIN — a credential on
-     * the spot. Null [staffId] = a shared tablet, which stays in the counter's queue for Allow.
-     */
-    suspend fun claim(host: String, port: Int, fingerprint: String, requestId: String, staffId: String?, pin: String?): Answer<PairedDevice?> {
-        val body = buildJsonObject {
-            put("staff_id", staffId?.let { JsonPrimitive(it) } ?: JsonNull)
-            put("pin", pin?.let { JsonPrimitive(it) } ?: JsonNull)
-        }
-        val wire = send(pinned(fingerprint), plain("https://$host:$port/v1/pair/$requestId/claim").post(body.toString().toRequestBody(jsonType)).build())
-        return when (wire) {
-            is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
-            is Wire.Http -> when (wire.code) {
-                200 -> try { Answer.Ok(MbJson.decodeFromString(PairedDevice.serializer(), wire.body)) } catch (e: Exception) { Answer.Unreachable(Sentences.COUNTER_UNREACHABLE) }
-                202 -> Answer.Ok(null)
-                else -> trouble(wire)
-            }
         }
     }
 
@@ -126,6 +105,24 @@ class CounterLink(
             }
         }
     }
+
+    /** `DELETE /v1/me`: this phone is leaving; the counter forgets it. Best effort. */
+    suspend fun leave(cred: Credential): Answer<Unit> =
+        when (val wire = send(pinned(cred.fingerprint), signed(cred, "/v1/me").delete().build())) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+            is Wire.Http -> if (wire.code in 200..299) Answer.Ok(Unit) else trouble(wire)
+        }
+
+    /** `POST /v1/cloud-login`: the person's cloud login, fetched by the counter and passed through. */
+    suspend fun cloudLogin(cred: Credential): Answer<JsonObject> =
+        json(cred, signed(cred, "/v1/cloud-login").post("{}".toRequestBody(jsonType)).build()).let { a ->
+            when (a) {
+                is Answer.Ok -> a.value.asObjectOrNull()?.let { Answer.Ok(it) } ?: Answer.Unreachable(Sentences.COUNTER_UNREACHABLE)
+                is Answer.Refused -> a
+                is Answer.Unreachable -> a
+                is Answer.SignedOut -> a
+            }
+        }
 
     suspend fun me(cred: Credential): Answer<Me> = json(cred, signed(cred, "/v1/me").get().build()).let { a ->
         when (a) { is Answer.Ok -> a.value.asObjectOrNull()?.let { Answer.Ok(Me.parse(it)) } ?: Answer.Unreachable(Sentences.COUNTER_UNREACHABLE); is Answer.Refused -> a; is Answer.Unreachable -> a; is Answer.SignedOut -> a }

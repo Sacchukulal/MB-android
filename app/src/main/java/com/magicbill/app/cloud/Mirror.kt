@@ -50,17 +50,17 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
     class Table(val name: String, val need: String?, val write: suspend (restaurantId: String, rows: List<JsonObject>) -> Unit)
 
     val tables: List<Table> = listOf(
-        Table("day_totals", "phone.reports") { r, rows -> db.totals().upsertDays(rows.map { dayTotal(r, it) }) },
-        Table("day_item_totals", "phone.reports") { r, rows -> db.totals().upsertItems(rows.map { dayItem(r, it) }) },
-        Table("day_category_totals", "phone.reports") { r, rows -> db.totals().upsertCategories(rows.map { dayCategory(r, it) }) },
-        Table("bills", "phone.reports") { r, rows -> db.bills().upsert(rows.map { bill(r, it) }) },
-        Table("expense_categories", "phone.reports") { r, rows -> db.expenses().upsertCategories(rows.map { expenseCategory(r, it) }) },
-        Table("expenses", "phone.reports") { r, rows -> db.expenses().upsert(rows.map { expense(r, it) }) },
-        Table("cash_movements", "phone.reports") { r, rows -> db.cash().upsert(rows.map { cash(r, it) }) },
-        Table("customers", "phone.khata") { r, rows -> db.khata().upsertCustomers(rows.map { customer(r, it) }) },
-        Table("customer_ledger", "phone.khata") { r, rows -> db.khata().upsertLedger(rows.map { ledger(r, it) }) },
-        Table("roles", "phone.staff") { r, rows -> db.people().upsertRoles(rows.map { role(r, it) }) },
-        Table("staff", "phone.staff") { r, rows -> db.people().upsertStaff(rows.map { staff(r, it) }) },
+        Table("day_totals", "reports.view") { r, rows -> db.totals().upsertDays(rows.map { dayTotal(r, it) }) },
+        Table("day_item_totals", "reports.view") { r, rows -> db.totals().upsertItems(rows.map { dayItem(r, it) }) },
+        Table("day_category_totals", "reports.view") { r, rows -> db.totals().upsertCategories(rows.map { dayCategory(r, it) }) },
+        Table("bills", "reports.view") { r, rows -> db.bills().upsert(rows.map { bill(r, it) }) },
+        Table("expense_categories", "reports.view") { r, rows -> db.expenses().upsertCategories(rows.map { expenseCategory(r, it) }) },
+        Table("expenses", "reports.view") { r, rows -> db.expenses().upsert(rows.map { expense(r, it) }) },
+        Table("cash_movements", "reports.view") { r, rows -> db.cash().upsert(rows.map { cash(r, it) }) },
+        Table("customers", "credit.collect") { r, rows -> db.khata().upsertCustomers(rows.map { customer(r, it) }) },
+        Table("customer_ledger", "credit.collect") { r, rows -> db.khata().upsertLedger(rows.map { ledger(r, it) }) },
+        Table("roles", "staff.manage") { r, rows -> db.people().upsertRoles(rows.map { role(r, it) }) },
+        Table("staff", "staff.manage") { r, rows -> db.people().upsertStaff(rows.map { staff(r, it) }) },
         Table("menu_categories", null) { r, rows -> db.menu().upsertCategories(rows.map { menuCategory(r, it) }) },
         Table("menu_items", null) { r, rows -> db.menu().upsertItems(rows.map { menuItem(r, it) }) },
         Table("notices", null) { _, rows -> db.notices().upsert(rows.map { notice(it) }) },
@@ -166,9 +166,9 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
     private fun role(r: String, o: JsonObject) = RoleRow(r, o.str("id"), o.str("name"), o.bool("is_builtin"), o.intOrNull("max_discount_bp"), o.longOrNull("max_discount_paise"), o.raw("permissions").let { if (it == "null") "[]" else it }, updated(o), deleted(o))
 
     private fun staff(r: String, o: JsonObject) = StaffRow(
-        r, o.str("id"), o.strOrNull("role_id"), o.str("name"), o.strOrNull("code"), o.strOrNull("phone"), o.strOrNull("joined_on"), o.str("status"),
+        r, o.str("id"), o.strOrNull("role_id"), o.str("name"), o.strOrNull("phone"), o.strOrNull("joined_on"), o.str("status"),
         o.strOrNull("designation"), o.strOrNull("department"), o.bool("is_rider"), o.str("employment_type"), o.strOrNull("left_on"),
-        o.bool("can_login_on_phone"), updated(o), o.str("updated_by"), deleted(o),
+        updated(o), o.str("updated_by"), deleted(o),
     )
 
     private fun menuCategory(r: String, o: JsonObject) = MenuCategoryRow(r, o.str("id"), o.str("name"), o.int("sort_order"), o.bool("is_active"), updated(o), deleted(o))

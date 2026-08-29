@@ -10,7 +10,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -19,10 +24,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -34,17 +41,13 @@ import com.magicbill.app.counter.Counter
 import com.magicbill.app.counter.Discovery
 import com.magicbill.app.counter.Floor
 import com.magicbill.app.counter.PairCode
-import com.magicbill.app.counter.Person
 import com.magicbill.app.ui.kit.Busy
-import com.magicbill.app.ui.kit.Chip
 import com.magicbill.app.ui.kit.CodeField
-import com.magicbill.app.ui.kit.Field
 import com.magicbill.app.ui.kit.Notice
 import com.magicbill.app.ui.kit.Page
-import com.magicbill.app.ui.kit.PinField
 import com.magicbill.app.ui.kit.PrimaryButton
 import com.magicbill.app.ui.kit.QuietButton
-import com.magicbill.app.ui.kit.Section
+import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
 import com.magicbill.app.ui.theme.Gap
@@ -58,9 +61,10 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Pairing, in the order a waiter lives it: scan the counter's code (or type it) → tap your
- * name → type your PIN → you are in. Nobody at the counter presses anything. A shared tablet
- * picks "Nobody's" and waits for Allow instead.
+ * Pairing, the whole of it from the phone's side: scan the counter's code (or type it), then
+ * wait while somebody at the counter says whose phone this is and presses Allow. The phone
+ * types no name, no code, no PIN. Once the counter lets it in, the counter also hands over the
+ * person's cloud login, so Home and Reports work without a second sign-in.
  */
 @HiltViewModel
 class PairViewModel @Inject constructor(
@@ -73,8 +77,6 @@ class PairViewModel @Inject constructor(
         /** The camera and the code box. */
         data object Scan : Step
         data class Busy(val says: String) : Step
-        /** The code was good: who are you? */
-        data class Claim(val presented: Counter.Presented, val wrong: String? = null) : Step
         data object Done : Step
     }
 
@@ -83,10 +85,6 @@ class PairViewModel @Inject constructor(
     private val sentenceFlow = MutableStateFlow<String?>(null)
     /** The last refusal, under the scanner. */
     val sentence: StateFlow<String?> get() = sentenceFlow
-    var phoneName: String = account.phoneName()
-        private set
-
-    fun setPhoneName(name: String) { phoneName = name; account.setPhoneName(name) }
 
     /** From the QR. */
     fun scanned(text: String) {
@@ -110,49 +108,34 @@ class PairViewModel @Inject constructor(
     }
 
     private fun present(code: PairCode) {
+        sentenceFlow.value = null
         stepFlow.value = Step.Busy("Checking the counter…")
         viewModelScope.launch {
-            when (val a = counter.present(code, phoneName)) {
-                is Answer.Ok -> stepFlow.value = Step.Claim(a.value)
-                else -> back(a.sentenceOrNull)
+            val presented = when (val a = counter.present(code, account.phoneName(), account.installId())) {
+                is Answer.Ok -> a.value
+                else -> { back(a.sentenceOrNull); return@launch }
             }
-        }
-    }
-
-    /** The person: their name and their PIN. */
-    fun claim(person: Person, pin: String) {
-        val now = stepFlow.value as? Step.Claim ?: return
-        stepFlow.value = Step.Busy("Checking with ${now.presented.shopName.ifBlank { "the counter" }}…")
-        viewModelScope.launch {
-            when (val a = counter.claim(now.presented, person.id, pin)) {
-                is Answer.Ok -> finished()
-                is Answer.Refused -> {
-                    // A wrong PIN with tries left stays on this step; the last one goes back to the scanner.
-                    if (a.code == "403") stepFlow.value = now.copy(wrong = a.sentence) else back(a.sentence)
+            val shop = presented.shopName.ifBlank { "the counter" }
+            val paired = counter.waitForAllow(presented) {
+                stepFlow.value = Step.Busy("Waiting for somebody at $shop to say whose phone this is and press Allow…")
+            }
+            when (paired) {
+                is Answer.Ok -> {
+                    // The person's cloud login, from the counter. A miss here is not a failed
+                    // pairing: the phone is on the floor, and asks again on its next start.
+                    stepFlow.value = Step.Busy("Signing in…")
+                    // The counter has just written the credential; a first miss is tried once more.
+                    android.util.Log.i("MagicBill", "paired; asking for the cloud login")
+                    if (account.signInThroughCounter(counter) !is Answer.Ok) {
+                        kotlinx.coroutines.delay(1_500)
+                        account.signInThroughCounter(counter)
+                    }
+                    floor.refreshCatalogue(force = true)
+                    stepFlow.value = Step.Done
                 }
-                else -> back(a.sentenceOrNull)
+                else -> back(paired.sentenceOrNull)
             }
         }
-    }
-
-    /** A shared tablet: nobody's — somebody at the counter presses Allow. */
-    fun shared() {
-        val now = stepFlow.value as? Step.Claim ?: return
-        stepFlow.value = Step.Busy("Checking with the counter…")
-        viewModelScope.launch {
-            val a = counter.waitForAllow(now.presented) {
-                stepFlow.value = Step.Busy("Waiting for somebody at ${now.presented.shopName.ifBlank { "the counter" }} to press Allow…")
-            }
-            when (a) {
-                is Answer.Ok -> finished()
-                else -> back(a.sentenceOrNull)
-            }
-        }
-    }
-
-    private suspend fun finished() {
-        floor.refreshCatalogue(force = true)
-        stepFlow.value = Step.Done
     }
 
     private fun back(says: String?) {
@@ -175,65 +158,73 @@ fun PairScreen(back: () -> Unit, done: () -> Unit, vm: PairViewModel = hiltViewM
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     var token by rememberSaveable { mutableStateOf("") }
-    var name by rememberSaveable { mutableStateOf(vm.phoneName) }
+    var typing by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!granted) ask.launch(Manifest.permission.CAMERA) }
     LaunchedEffect(step) { if (step is PairViewModel.Step.Done) done() }
 
-    when (val s = step) {
-        is PairViewModel.Step.Claim -> ClaimScreen(s, back = { vm.scanned("") }, onPerson = vm::claim, onShared = vm::shared)
-        else -> Page("Connect to the counter", "On the counter: Settings → Phones", back = back) {
-            // The keyboard must never hide what is being typed: the code box sits at the top and
-            // the page gives way to the keyboard.
-            Column(Modifier.imePadding()) {
-                VGap(Gap.field)
-                Field(name, { name = it; vm.setPhoneName(it) }, "This phone's name", placeholder = "Ravi's phone", ime = ImeAction.Next)
-                VGap(Gap.field)
-                if (s is PairViewModel.Step.Busy) {
+    Page("Scan the code", "It is on the counter: Settings › Phones", back = back) {
+        Column(Modifier.imePadding()) {
+            VGap(Gap.field)
+            when (val s = step) {
+                is PairViewModel.Step.Busy -> {
                     Busy()
-                    Text(s.says, style = Mb.type.body, color = Mb.colors.inkMuted, modifier = Modifier.fillMaxWidth())
-                } else {
-                    CodeField(token, { token = dashed(it) }, "The code on the counter", placeholder = "8GF-CVC", onDone = { if (token.length >= 7) vm.typed(token) })
-                    VGap(Gap.field)
-                    PrimaryButton("Connect", { vm.typed(token) }, Modifier.fillMaxWidth(), enabled = token.length >= 7 && name.isNotBlank())
-                    Section("Or scan it")
-                    if (granted) {
+                    Text(s.says, style = Mb.type.body, color = Mb.colors.inkMuted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                }
+                else -> {
+                    if (granted && !typing) {
                         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(Radius.lg)).background(Mb.colors.raised)) {
                             QrScanner(onCode = vm::scanned)
                         }
+                        VGap(Gap.field)
+                        Text("Hold the phone up to the code on the counter's screen. Then somebody at the counter picks your name and presses Allow.", style = Mb.type.caption, color = Mb.colors.inkMuted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                        VGap(Gap.group)
+                        QuietButton("Type the code instead", { typing = true }, Modifier.fillMaxWidth())
                     } else {
-                        Notice(Tone.Info, "Without the camera, type the code instead.", action = { QuietButton("Allow camera", { ask.launch(Manifest.permission.CAMERA) }) })
+                        if (!granted) {
+                            Notice(Tone.Info, "Without the camera, type the code instead.", action = { QuietButton("Allow camera", { ask.launch(Manifest.permission.CAMERA) }) })
+                            VGap(Gap.field)
+                        }
+                        CodeField(token, { token = dashed(it) }, "The code under the QR", placeholder = "8GF-CVC", onDone = { if (token.length >= 7) vm.typed(token) })
+                        VGap(Gap.field)
+                        PrimaryButton("Connect", { vm.typed(token) }, Modifier.fillMaxWidth(), enabled = token.length >= 7)
+                        if (granted) { VGap(Gap.field); QuietButton("Scan it instead", { typing = false }, Modifier.fillMaxWidth()) }
                     }
                 }
-                if (sentence != null) { VGap(Gap.field); Notice(Tone.Danger, sentence!!) }
             }
+            if (sentence != null) { VGap(Gap.field); Notice(Tone.Danger, sentence!!) }
         }
     }
 }
 
-/** "Who are you?" — the names off the counter's staff list, then the PIN. */
+/** The Orders tab on a phone that is not on a counter yet: one door, the scanner. */
 @Composable
-private fun ClaimScreen(step: PairViewModel.Step.Claim, back: () -> Unit, onPerson: (Person, String) -> Unit, onShared: () -> Unit) {
-    var chosen by remember { mutableStateOf<Person?>(null) }
-    var pin by remember { mutableStateOf("") }
-    Page("Who are you?", step.presented.shopName.ifBlank { "The counter" }, back = back) {
-        Column(Modifier.imePadding()) {
+fun ConnectScreen(onPair: () -> Unit) {
+    Page("Orders") {
+        Column(Modifier.fillMaxWidth().padding(top = Space.s7), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, tint = Mb.colors.accent, modifier = Modifier.size(64.dp))
+            VGap(Gap.group)
+            Text("Take orders at the tables", style = Mb.type.section, color = Mb.colors.ink, textAlign = TextAlign.Center)
             VGap(Gap.field)
-            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Space.s2), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(Space.s2)) {
-                step.presented.asked.people.forEach { p -> Chip(p.name, chosen?.id == p.id, { chosen = p; pin = "" }) }
-            }
-            if (chosen != null) {
-                Section("Your PIN")
-                PinField(pin, { pin = it }, onDone = { if (pin.length == 4) onPerson(chosen!!, pin) })
-                if (step.wrong != null) { VGap(Gap.field); Notice(Tone.Danger, step.wrong) }
-                VGap(Gap.group)
-                PrimaryButton("Connect as ${chosen!!.name}", { onPerson(chosen!!, pin) }, Modifier.fillMaxWidth(), enabled = pin.length == 4)
-            }
-            Section("Or")
-            QuietButton("A shared tablet — nobody's", onShared)
-            Text("Somebody at the counter presses Allow for a shared tablet.", style = Mb.type.caption, color = Mb.colors.inkMuted)
+            Text("Scan the code on the counter's screen once. Somebody at the counter picks your name and presses Allow — that is all.", style = Mb.type.body, color = Mb.colors.inkMuted, textAlign = TextAlign.Center)
+            VGap(Gap.group)
+            PrimaryButton("Scan the counter's code", onPair, Modifier.fillMaxWidth(), icon = Icons.Outlined.QrCodeScanner)
         }
     }
 }
 
-@Suppress("unused")
-private val keepFloor: Class<Floor> = Floor::class.java
+/** Home or Reports on a phone with no cloud login — a shared tablet, or a counter that was offline. */
+@Composable
+fun NeedsCloudScreen(onOwner: () -> Unit, onPair: () -> Unit) {
+    Page("Magic Bill") {
+        Column(Modifier.fillMaxWidth().padding(top = Space.s7), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("This phone is not signed in to the shop", style = Mb.type.section, color = Mb.colors.ink, textAlign = TextAlign.Center)
+            VGap(Gap.field)
+            Text("Reports and bills come from the shop's account. A staff phone gets it when the counter allows it under a name; the owner signs in with email and password.", style = Mb.type.body, color = Mb.colors.inkMuted, textAlign = TextAlign.Center)
+            VGap(Gap.group)
+            PrimaryButton("I own the shop", onOwner, Modifier.fillMaxWidth())
+            VGap(Gap.field)
+            SecondaryButton("Scan the counter's code again", onPair, Modifier.fillMaxWidth())
+        }
+    }
+}
+

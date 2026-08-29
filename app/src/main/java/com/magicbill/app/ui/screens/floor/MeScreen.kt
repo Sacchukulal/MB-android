@@ -68,7 +68,8 @@ fun MeScreen(back: () -> Unit, onPair: () -> Unit, left: () -> Unit, vm: MeViewM
         if (revoked != null) { Notice(Tone.Danger, revoked!!, action = { SecondaryButton("Connect again", onPair) }); VGap(Gap.field) }
         Section("This phone", first = true)
         Panel {
-            KeyValue("Known as", me?.name ?: "—")
+            KeyValue("Known as", me?.staffName ?: "Shared — nobody's")
+            KeyValue("This phone", me?.name ?: "—")
             KeyValue("Counter", cred?.let { "${it.host}:${it.port}" } ?: "—")
             KeyValue("Connection", when (stream) { Stream.State.Live -> "Live"; Stream.State.Connecting -> "Connecting"; Stream.State.Lost -> "Reconnecting"; Stream.State.Off -> "Off the floor" })
         }

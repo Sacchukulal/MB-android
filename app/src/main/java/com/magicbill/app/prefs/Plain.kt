@@ -25,10 +25,8 @@ class Plain @Inject constructor(@ApplicationContext context: Context) {
     fun putBool(key: String, value: Boolean) = prefs.edit().putBoolean(key, value).apply()
 
     companion object {
-        const val THEME = "theme"               // system | light | dark
+        const val THEME = "theme"               // light | dark
         const val RESTAURANT = "restaurant.id"  // the one the owner is looking at
         const val CRASH_OPT_IN = "crash.opt_in"
-        const val TEXT_SIZE = "text.size"       // 1.0 .. 1.3
-        const val PHONE_NAME = "phone.name"
     }
 }

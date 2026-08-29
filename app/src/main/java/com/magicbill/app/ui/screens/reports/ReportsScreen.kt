@@ -146,11 +146,11 @@ class ReportsViewModel @Inject constructor(
         lines += Ranges.words(r.range, today)
         lines += ""
         lines += Exporter.line("Bills", t.bills.toString())
-        lines += Exporter.line("Gross sales", Money.plain(t.grossPaise))
+        lines += Exporter.line("Billed", Money.plain(t.grossPaise))
         lines += Exporter.line("Discount", Money.plain(t.discountPaise))
         lines += Exporter.line("Tax", Money.plain(t.taxPaise))
         lines += Exporter.line("Charges", Money.plain(t.chargesPaise))
-        lines += Exporter.line("Net sales", Money.plain(t.netPaise))
+        lines += Exporter.line("Net after voids and refunds", Money.plain(t.netPaise))
         lines += Exporter.line("Expenses", Money.plain(t.expensesPaise))
         lines += ""
         lines += "Money in"
@@ -211,11 +211,11 @@ fun ReportsScreen(openBill: (String) -> Unit, vm: ReportsViewModel = hiltViewMod
         }
         Section("Breakdown")
         Panel {
-            KeyValue("Gross sales", Money.rupees(t.grossPaise))
+            KeyValue("Billed", Money.rupees(t.grossPaise))
             KeyValue("Discount", "− " + Money.rupees(t.discountPaise))
             KeyValue("Tax", Money.rupees(t.taxPaise))
             KeyValue("Charges", Money.rupees(t.chargesPaise))
-            KeyValue("Net sales", Money.rupees(t.netPaise), bold = true)
+            KeyValue("Net, after voids and refunds", Money.rupees(t.netPaise), bold = true)
             KeyValue("Expenses", "− " + Money.rupees(t.expensesPaise))
             KeyValue("After expenses", Money.rupees(t.afterExpensesPaise), bold = true, valueColor = if (t.afterExpensesPaise < 0) Mb.colors.danger else null)
             if (t.creditGivenPaise > 0 || t.creditCollectedPaise > 0) {

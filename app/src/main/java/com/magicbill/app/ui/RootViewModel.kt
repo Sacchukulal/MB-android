@@ -5,10 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.Restaurant
 import com.magicbill.app.cloud.Sync
-import com.magicbill.app.counter.Floor
-import com.magicbill.app.counter.Stream
 import com.magicbill.app.counter.Counter
 import com.magicbill.app.counter.Credential
+import com.magicbill.app.counter.Floor
+import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.MbDatabase
 import com.magicbill.app.ui.theme.ThemeController
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,9 +28,9 @@ object Boot {
     @Volatile var ready = false
 }
 
-/** Which tabs this phone gets: what the cloud lets its person open, and whether it is paired. */
+/** The tabs, in this order. Home and Reports are there for a person who may see reports. */
 enum class Tab(val label: String) {
-    Home("Dashboard"), Tables("Orders"), Reports("Reports"), Account("Account"), Bills("Bills"), Khata("Khata"), Queue("Queue"), More("More")
+    Home("Home"), Reports("Reports"), Orders("Orders"), Account("Account"), More("More")
 }
 
 @HiltViewModel
@@ -45,11 +45,22 @@ class RootViewModel @Inject constructor(
 ) : ViewModel() {
     /** What the counter said, once each — the shell shows them. */
     val counterSays: kotlinx.coroutines.flow.SharedFlow<String> = floor.sentences
-    val themeMode: StateFlow<String> = theme.mode
-    val textScale: StateFlow<Float> = theme.textScale
+    val dark: StateFlow<Boolean> = theme.dark
     val restaurant: StateFlow<Restaurant?> = account.current
     val credential: StateFlow<Credential?> = counter.credential
     val signedIn: StateFlow<Boolean> = account.session.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun toggleTheme() = theme.toggle()
+
+    /** May this phone's person see reports? Owners always; staff by their role, the counter's code. */
+    val mayReport: StateFlow<Boolean> = account.current.map { r -> r != null && (r.isOwner || "reports.view" in r.permissions) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** The bar: Home and Reports only when they would show something. */
+    val tabs: StateFlow<List<Tab>> = mayReport.map { may -> tabsFor(may) }.stateIn(viewModelScope, SharingStarted.Eagerly, tabsFor(false))
+
+    /** The same answer, now — for the moment right after a sign-in, before the flow has caught up. */
+    fun tabsNow(): List<Tab> = tabsFor(account.current.value?.let { it.isOwner || "reports.view" in it.permissions } ?: false)
 
     /** Unread notices, for the badge. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -61,38 +72,6 @@ class RootViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    val tabs: StateFlow<List<Tab>> = combine(account.session, account.current, counter.credential) { session, r, cred ->
-        tabsFor(session != null, r, cred != null)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, listOf(Tab.More))
-
-    /** The same answer, now — for the moment right after a sign-in, before the flow has caught up. */
-    fun tabsNow(): List<Tab> = tabsFor(account.session.value != null, account.current.value, counter.credential.value != null)
-
-    /** Tabs that did not fit on the bar live in More. */
-    val overflow: StateFlow<List<Tab>> = combine(account.session, account.current, counter.credential, tabs) { session, r, cred, shown ->
-        allTabsFor(session != null, r, cred != null).filter { it !in shown }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-
-    companion object {
-        /**
-         * Every tab this phone could show, in the owner's chosen order: Dashboard, Reports,
-         * Orders, Account — the rest live in More. Bills is not a tab: it lives inside Reports.
-         */
-        fun allTabsFor(cloud: Boolean, r: Restaurant?, paired: Boolean): List<Tab> {
-            val perms = r?.permissions ?: emptySet()
-            return buildList {
-                if (cloud && "phone.reports" in perms) { add(Tab.Home); add(Tab.Reports) }
-                if (paired) add(Tab.Tables)
-                if (cloud) add(Tab.Account)
-                if (cloud && "phone.khata" in perms) add(Tab.Khata)
-                if (paired) add(Tab.Queue)
-            }
-        }
-
-        /** The bar: at most four, then More. */
-        fun tabsFor(cloud: Boolean, r: Restaurant?, paired: Boolean): List<Tab> = allTabsFor(cloud, r, paired).take(4) + Tab.More
-    }
-
     init {
         viewModelScope.launch(Dispatchers.IO) {
             account.load()
@@ -103,9 +82,21 @@ class RootViewModel @Inject constructor(
                 account.refresh()
                 sync.pullIfStale()
             }
-            if (counter.isPaired) { counter.refreshMe(); stream.ensure() }
+            if (counter.isPaired) {
+                counter.refreshMe()
+                stream.ensure()
+                // A phone the counter let in but could not sign in to the cloud at the time
+                // (the counter was offline): ask again, every start, until it lands.
+                if (account.session.value == null) account.signInThroughCounter(counter)
+            }
         }
     }
 
+    companion object {
+        fun tabsFor(mayReport: Boolean): List<Tab> =
+            if (mayReport) Tab.entries else listOf(Tab.Orders, Tab.Account, Tab.More)
+    }
+
+    /** Signed in to the cloud, or paired with a counter: something to show behind the tabs. */
     val hasAnything: StateFlow<Boolean> = combine(signedIn, credential) { s, c -> s || c != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 }

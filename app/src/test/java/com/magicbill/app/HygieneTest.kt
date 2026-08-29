@@ -49,10 +49,11 @@ class HygieneTest {
         assertTrue("a second kit: ${twins.map { it.name }}", twins.isEmpty())
     }
 
-    @Test fun no_realtime_no_polling_no_edge_function_but_the_one() {
+    /** The phone calls no Edge Function at all: its staff login is fetched by the counter. */
+    @Test fun no_realtime_no_polling_no_edge_function() {
         val bad = sources.filter { f ->
             val t = f.readText()
-            t.contains("/realtime/") || (t.contains("/functions/v1/") && !t.contains("staff-login"))
+            t.contains("/realtime/") || t.contains("/functions/v1/")
         }
         assertTrue("a metered or realtime call in: ${bad.map { it.name }}", bad.isEmpty())
     }

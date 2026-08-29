@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable object Welcome
 @Serializable object OwnerSignIn
-@Serializable object StaffSignIn
+/** The one door for a staff phone, and the owner's door to the floor: scan the counter's code. */
 @Serializable object PairCounter
 
 @Serializable object Home
@@ -23,7 +23,6 @@ import kotlinx.serialization.Serializable
 @Serializable object Notices
 @Serializable object AccountScreen
 @Serializable object More
-@Serializable object Appearance
 
 @Serializable object Tables
 @Serializable data class OrderScreen(val orderId: String)

@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         MenuItemRow::class, MenuCategoryRow::class, NoticeRow::class, NoticeReadRow::class,
         CursorRow::class, IntentRow::class, FloorItemRow::class, FloorTableRow::class, FloorOrderRow::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class MbDatabase : RoomDatabase() {

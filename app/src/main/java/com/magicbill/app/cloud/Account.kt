@@ -2,6 +2,7 @@ package com.magicbill.app.cloud
 
 import com.magicbill.app.core.Answer
 import com.magicbill.app.core.Clock
+import com.magicbill.app.counter.Counter
 import com.magicbill.app.core.parseJsonOrNull
 import com.magicbill.app.db.MbDatabase
 import com.magicbill.app.di.AppScope
@@ -55,9 +56,31 @@ class Account @Inject constructor(
 
     fun installId(): String = secure.installId()
 
-    fun phoneName(): String = plain.get(Plain.PHONE_NAME) ?: (android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() } + " " + android.os.Build.MODEL).trim()
+    /** What the counter shows for this phone: the make and model. Nobody types a name. */
+    fun phoneName(): String = (android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() } + " " + android.os.Build.MODEL).trim()
 
-    fun setPhoneName(name: String) = plain.put(Plain.PHONE_NAME, name.trim())
+    /**
+     * A paired phone's cloud login, from the counter (LAN_PROTOCOL.md §3): the counter asks the
+     * cloud for the person it bound this phone to and passes the login through. Nothing to do
+     * when the phone is already signed in — an owner's email login is never replaced.
+     */
+    suspend fun signInThroughCounter(counter: Counter): Answer<CloudSession> {
+        sessions.current()?.let { android.util.Log.i(CloudLink.TAG, "counter login: already signed in as ${it.kind}"); return Answer.Ok(it) }
+        android.util.Log.i(CloudLink.TAG, "counter login: asking the counter")
+        return withContext(Dispatchers.IO) {
+            when (val a = counter.cloudLogin()) {
+                is Answer.Ok -> {
+                    val s = cloud.adoptCounterLogin(a.value)
+                    android.util.Log.i(CloudLink.TAG, "counter login: got ${if (s == null) "no session" else "a session for " + s.staff?.staffName}")
+                    if (s == null) Answer.Unreachable("The counter's answer had no login in it.")
+                    else { val r = refresh(); android.util.Log.i(CloudLink.TAG, "counter login: shop list ${r::class.simpleName}"); Answer.Ok(s) }
+                }
+                is Answer.Refused -> { android.util.Log.w(CloudLink.TAG, "counter login refused: ${a.sentence}"); a }
+                is Answer.Unreachable -> { android.util.Log.w(CloudLink.TAG, "counter login unreachable: ${a.sentence}"); a }
+                is Answer.SignedOut -> { android.util.Log.w(CloudLink.TAG, "counter login: not paired / refused at the door: ${a.sentence}"); a }
+            }
+        }
+    }
 
     suspend fun refresh(): Answer<List<Restaurant>> = when (val a = cloud.rpc("mb_my_restaurants")) {
         is Answer.Ok -> {

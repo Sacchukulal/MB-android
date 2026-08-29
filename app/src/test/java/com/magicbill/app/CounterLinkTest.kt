@@ -121,27 +121,27 @@ class CounterLinkTest {
         assertEquals("Hall", c.tables.single().section)
     }
 
-    @Test fun pairing_names_the_people_and_a_pin_claims_one() = runTest {
-        server.once("POST", "/v1/pair", FakeServer.Reply(202, """{"request_id":"rq1","message":"Waiting…","people":[{"id":"stf_1","name":"Ravi"}]}"""))
-        val asked = (link.pair("h", 1, "0".repeat(64), "Ravi's phone", "8GF-CVC") as Answer.Ok).value
-        assertEquals("rq1", asked.requestId)
-        assertEquals("Ravi", asked.people.single().name)
-        assertTrue(server.sent.single().body.contains("\"platform\":\"android\""))
-        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(403, """{"message":"That PIN is not right. 2 tries left."}"""))
-        val wrong = link.claim("h", 1, "0".repeat(64), "rq1", "stf_1", "0000") as Answer.Refused
-        assertEquals("403", wrong.code)
-        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(200, """{"device_id":"dev_9","secret":"s9","server_id":"srv_1"}"""))
-        assertEquals("dev_9", (link.claim("h", 1, "0".repeat(64), "rq1", "stf_1", "1234") as Answer.Ok).value?.deviceId)
-        assertTrue(server.sent.last().body.contains("\"pin\":\"1234\""))
-        // A shared tablet names nobody and keeps polling.
-        server.once("POST", "/v1/pair/rq1/claim", FakeServer.Reply(202, """{"message":"Waiting for somebody at the counter to allow this phone."}"""))
-        assertEquals(Answer.Ok(null), link.claim("h", 1, "0".repeat(64), "rq1", null, null))
+    @Test fun pairing_waits_for_allow_and_the_counter_hands_over_the_cloud_login() = runTest {
+        server.once("POST", "/v1/pair", FakeServer.Reply(202, """{"request_id":"rq1","message":"Waiting…"}"""))
+        val asked = (link.pair("h", 1, "0".repeat(64), "Vivo V2443", "8GF-CVC", "inst-1") as Answer.Ok).value
+        assertEquals("rq1", asked)
+        assertTrue(server.sent.single().body.contains("\"name\":\"Vivo V2443\"") && server.sent.single().body.contains("\"install\":\"inst-1\""))
+
         server.once("GET", "/v1/pair/rq1", FakeServer.Reply(202, """{"message":"Waiting for somebody at the counter to allow this phone."}"""))
         assertEquals(Answer.Ok(null), link.pairStatus("h", 1, "0".repeat(64), "rq1"))
         server.once("GET", "/v1/pair/rq1", FakeServer.Reply(200, """{"device_id":"dev_9","secret":"s9","server_id":"srv_1"}"""))
         assertEquals("dev_9", (link.pairStatus("h", 1, "0".repeat(64), "rq1") as Answer.Ok).value?.deviceId)
         server.once("GET", "/v1/pair/rq1", FakeServer.Reply(400, """{"message":"That code has expired or has already been used."}"""))
         assertTrue(link.pairStatus("h", 1, "0".repeat(64), "rq1") is Answer.Refused)
+
+        val cred = Credential("h", 1, "0".repeat(64), "srv_1", "Anna", "dev_9", "s9")
+        server.once("POST", "/v1/cloud-login", FakeServer.Reply(200, """{"session":{"access_token":"s","refresh_token":"sr","expires_in":3600},"device_id":"d1","restaurant":{"id":"r1","name":"Anna's","short_code":"K7M2QX"},"staff":{"id":"st1","name":"Ravi"}}"""))
+        val login = (link.cloudLogin(cred) as Answer.Ok).value
+        assertEquals("d1", login["device_id"].toString().trim('"'))
+        assertEquals("Bearer dev_9.s9", server.sent.last().headers["Authorization"])
+        server.once("POST", "/v1/cloud-login", FakeServer.Reply(403, """{"message":"The counter cannot reach the cloud right now. Orders still work; reports come once it can."}"""))
+        val refused = link.cloudLogin(cred) as Answer.Refused
+        assertTrue(refused.sentence.startsWith("The counter cannot reach the cloud"))
     }
 
     @Test fun a_batch_answers_per_intent() = runTest {

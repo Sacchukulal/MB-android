@@ -10,8 +10,8 @@ decisions are in `../docs/ANDROID_ROUND.md`.
   bash: `cd MB-android && JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew …`
   — **always with an explicit `cd`; the shell's directory drifts.**
 - Tests: `.\gradlew.bat :app:testDebugUnitTest` (JUnit + Robolectric for Room). The hygiene
-  test bans keys, the old library, raw colours outside `ui/theme/Palette.kt`, Material tokens in screens, a second kit, realtime, and Edge Functions
-  other than `staff-login`.
+  test bans keys, the old library, raw colours outside `ui/theme/Palette.kt`, Material tokens in screens, a second kit, realtime, and any Edge
+  Function (a staff phone's login is fetched by the COUNTER after Allow and handed over on the LAN).
 - Install + drive: `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe install -r app/build/outputs/apk/debug/app-debug.apk`,
   `adb shell am start -n com.magicbill.app/.MainActivity`, `adb exec-out screencap -p > shot.png`.
 - Secrets live in `local.properties` (gitignored): `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the
@@ -24,7 +24,7 @@ decisions are in `../docs/ANDROID_ROUND.md`.
 
 `core/` money (paise → text, Indian grouping), IST days, Argon2id (the counter's parameters),
 `Answer` (Ok / Refused / Unreachable / SignedOut), frozen-bill JSON.
-`cloud/` `CloudLink` (OkHttp; password + `staff-login`; PostgREST RPC/REST; one refresh on 401),
+`cloud/` `CloudLink` (OkHttp; the owner's password login, the counter-fetched staff login kept; PostgREST RPC/REST; one refresh on 401),
 `SessionStore`, `Account` (restaurants, the chosen one), `Mirror` (ONE loop over 14 tables with
 a cursor each), `Sync` (when to pull), `People` (the staff desk), `ReportMath` (sums only).
 `counter/` `CounterLink` (pinned TLS, every LAN route, the WebSocket), `Counter` (pairing,
@@ -44,7 +44,8 @@ test forbids `MaterialTheme.colorScheme`/`typography` in screens and any second 
   names is a line's gross on a receipt (frozen price × frozen qty).
 - **Cache first, one emission.** Every screen draws from Room; a pull is silent; a spinner never
   covers cached content. Pull on open (if stale), pull-to-refresh, screen open. Never a timer.
-- **Nothing metered but `staff-login`, once per install.** No realtime, no other Edge Function.
+- **The phone calls nothing metered.** Its staff login comes from the counter (`POST /v1/cloud-login`) after
+  somebody there pressed Allow. No realtime, no Edge Function. The phone never asks for a shop code, a staff code or a PIN.
 - **Every network call has a deadline** from the OkHttp client; every answer is an `Answer`.
 - **Intents are durable before their first send; their id is kept across restarts; outcomes
   are final.** A retry uses the same id (`flush`); a held one is released with a NEW id.

@@ -66,7 +66,7 @@ class StaffViewModel @Inject constructor(private val account: Account, private v
         account.current, query,
     ) { (staff, roles), r, q ->
         val may = r?.isOwner == true || r?.may("staff.manage") == true
-        val filtered = staff.filter { q.isBlank() || it.name.contains(q, true) || it.code?.contains(q, true) == true }
+        val filtered = staff.filter { q.isBlank() || it.name.contains(q, true) }
         View(filtered, roles, may)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), View())
 
@@ -104,11 +104,10 @@ fun StaffScreen(back: () -> Unit, openMember: (String?) -> Unit, openRole: (Stri
 private fun MemberRow(s: StaffRow, role: String?, onClick: () -> Unit) {
     ListRow(
         s.name,
-        listOfNotNull(role, s.code, s.designation?.takeIf { it.isNotBlank() }).joinToString(" · "),
+        listOfNotNull(role, s.designation?.takeIf { it.isNotBlank() }).joinToString(" · "),
         trailing = {
             Column(horizontalAlignment = androidx.compose.ui.Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (s.status == "suspended") Badge("Suspended", Tone.Warn)
-                if (s.canLoginOnPhone && s.status == "active") Badge("Phone", Tone.Info)
                 if (s.isRider) Badge("Rider")
             }
         },
