@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -27,6 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -75,6 +79,7 @@ import com.magicbill.app.ui.screens.home.HomeScreen
 import com.magicbill.app.ui.screens.khata.CustomerScreen
 import com.magicbill.app.ui.screens.khata.KhataScreen
 import com.magicbill.app.ui.screens.more.MoreScreen
+import com.magicbill.app.ui.screens.more.UpdateSheet
 import com.magicbill.app.ui.screens.notices.NoticesScreen
 import com.magicbill.app.ui.screens.pair.ConnectScreen
 import com.magicbill.app.ui.screens.pair.NeedsCloudScreen
@@ -87,12 +92,13 @@ import com.magicbill.app.ui.screens.staff.StaffEditScreen
 import com.magicbill.app.ui.screens.staff.StaffScreen
 import com.magicbill.app.ui.theme.MBMotion
 
-private fun Tab.item(unread: Int) = when (this) {
+/** [moreDot]: an unread notice, or an update waiting behind "Not now". */
+private fun Tab.item(moreDot: Boolean) = when (this) {
     Tab.Home -> PillNavItem(label, Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard)
     Tab.Reports -> PillNavItem(label, Icons.Outlined.BarChart, Icons.Filled.BarChart)
     Tab.Orders -> PillNavItem(label, Icons.Outlined.RestaurantMenu, Icons.Filled.RestaurantMenu)
     Tab.Account -> PillNavItem(label, Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle)
-    Tab.More -> PillNavItem(label, Icons.Outlined.MoreHoriz, Icons.Filled.MoreHoriz, showDot = unread > 0)
+    Tab.More -> PillNavItem(label, Icons.Outlined.MoreHoriz, Icons.Filled.MoreHoriz, showDot = moreDot)
 }
 
 fun Tab.route(): Any = when (this) {
@@ -119,8 +125,19 @@ fun Shell(vm: RootViewModel) {
     val reporter = remember { Reporter(scope) }
     val backStack by nav.currentBackStackEntryAsState()
     val unread by vm.unread.collectAsStateWithLifecycle()
+    val update by vm.update.collectAsStateWithLifecycle()
+    val updateOpen by vm.updateOpen.collectAsStateWithLifecycle()
+    val updateWaiting by vm.updateWaiting.collectAsStateWithLifecycle()
     val onTab = tabs.any { t -> backStack?.destination?.hasRoute(t.route()::class) == true }
     val showBar = hasAnything && onTab
+
+    // Back from Settings with "Install unknown apps" switched on: the installer opens by itself.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.updater.resumed() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // What the counter said — once, wherever the phone is.
     LaunchedEffect(Unit) { vm.counterSays.collect { reporter.say(it) } }
@@ -149,7 +166,7 @@ fun Shell(vm: RootViewModel) {
                     if (showBar) {
                         val selectedIndex = tabs.indexOfFirst { t -> backStack?.destination?.hasRoute(t.route()::class) == true }.coerceAtLeast(0)
                         PillNavBar(
-                            items = tabs.map { it.item(unread) },
+                            items = tabs.map { it.item(unread > 0 || updateWaiting) },
                             selectedIndex = selectedIndex,
                             onSelect = { i ->
                                 nav.navigate(tabs[i].route()) {
@@ -219,6 +236,8 @@ fun Shell(vm: RootViewModel) {
             }
             // The counter's sentence, over everything, under the status bar — never over a button.
             ToastHost(reporter, Modifier.align(Alignment.TopCenter))
+            // A newer build on the shelf — only over the tabs, never over a sign-in or a pairing.
+            if (updateOpen && showBar) UpdateSheet(update, vm.updater)
         }
     }
 }

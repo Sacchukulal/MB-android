@@ -39,6 +39,22 @@ MB_KEY_PASSWORD=...
 ```
 
 Toolchain: Gradle 9.4.1 · AGP 9.2 (built-in Kotlin 2.3) · minSdk 26 ·
-target/compile SDK 36/37. Releases are tagged `v*`; CI builds and attaches
-`magic-bill.apk` + `version.json` when signing secrets are configured,
-otherwise the release is produced locally.
+target/compile SDK 36/37.
+
+## Releasing
+
+Every phone looks at `releases/latest/download/version.json` once per start
+(and from More → App update) and compares `version_code` with its own — so
+`versionCode` in `app/build.gradle.kts` must go up on every release, and the
+release's name can be anything. Old builds without a code compare by name.
+
+```
+# bump versionCode + versionName, commit, push, then:
+JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" scripts/release.sh v2.0.0 notes.md
+```
+
+The script builds the signed APK, writes `version.json`
+(`version`, `version_code`, `apk_url`, `apk_size`, `published`,
+`release_notes`), tags the commit and creates the GitHub release with both
+files attached. CI does the same on a `v*` tag when signing secrets are
+configured; without them it stays out of the way.

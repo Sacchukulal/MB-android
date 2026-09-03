@@ -28,5 +28,7 @@ class Plain @Inject constructor(@ApplicationContext context: Context) {
         const val THEME = "theme"               // light | dark
         const val RESTAURANT = "restaurant.id"  // the one the owner is looking at
         const val CRASH_OPT_IN = "crash.opt_in"
+        const val UPDATE_DISMISSED_VERSION = "update.dismissed.version"  // "Not now" on this build
+        const val UPDATE_DISMISSED_AT = "update.dismissed.at"            // … at this moment, for a day
     }
 }

@@ -43,7 +43,7 @@ jobs:
       - name: Build signed release APK
         if: steps.secrets.outputs.have_keystore == 'true'
         env:
-          SUPABASE_URL: https://rlvygwituwywofwcwjsf.supabase.co
+          SUPABASE_URL: https://grjhdszcvuomgluaqncf.supabase.co
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
           MB_KEYSTORE_FILE: keys/magic-bill-release.keystore
           MB_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -57,11 +57,17 @@ jobs:
         if: steps.secrets.outputs.have_keystore == 'true'
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          CODE=$(sed -n 's/^ *versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
           cp app/build/outputs/apk/release/app-release.apk magic-bill.apk
+          SIZE=$(stat -c %s magic-bill.apk)
+          # The phone reads this file to decide whether it is behind: version_code decides.
           cat > version.json <<EOF
           {
             "version": "$VERSION",
+            "version_code": $CODE,
             "apk_url": "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/magic-bill.apk",
+            "apk_size": $SIZE,
+            "published": "$(date -u +%Y-%m-%d)",
             "release_notes": "Magic Bill $VERSION"
           }
           EOF

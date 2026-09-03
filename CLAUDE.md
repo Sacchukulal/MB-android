@@ -18,7 +18,9 @@ decisions are in `../docs/ANDROID_ROUND.md`.
   NEW project `grjhdszcvuomgluaqncf`), `MB_KEYSTORE_*`. Never hardcode; never commit `keys/`.
 - Release signing MUST use `keys/magic-bill-release.keystore` (alias `magicbill`) — the same
   cert as every published build, or phones cannot update in place. Debug builds are signed
-  with it too. `versionCode` only ever goes up (17 = 3.0.0).
+  with it too. `versionCode` only ever goes up (17 = 3.0.0, 21 = the release NAMED 2.0.0): the
+  phone's updater (`update/Updater.kt`) compares codes from the shelf's `version.json`, never names.
+- Release: `scripts/release.sh vX.Y.Z notes.md` (see README → Releasing).
 
 ## Shape
 

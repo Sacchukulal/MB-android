@@ -11,6 +11,7 @@ import com.magicbill.app.counter.Floor
 import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.MbDatabase
 import com.magicbill.app.ui.theme.ThemeController
+import com.magicbill.app.update.Updater
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,7 +44,14 @@ class RootViewModel @Inject constructor(
     private val db: MbDatabase,
     private val floor: Floor,
     private val stream: Stream,
+    val updater: Updater,
 ) : ViewModel() {
+    /** The shelf's answer, and whether its sheet is up. */
+    val update: StateFlow<Updater.State> = updater.state
+    val updateOpen: StateFlow<Boolean> = updater.open
+    /** A newer build waits behind "Not now": the dot on More. */
+    val updateWaiting: StateFlow<Boolean> = updater.state.map { it is Updater.State.Available || it is Updater.State.Ready }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** What the counter said, once each — the shell shows them. */
     val counterSays: kotlinx.coroutines.flow.SharedFlow<String> = floor.sentences
     val dark: StateFlow<Boolean> = theme.dark
@@ -105,6 +113,8 @@ class RootViewModel @Inject constructor(
                 // (the counter was offline): ask again, every start, until it lands.
                 if (account.session.value == null) account.signInThroughCounter(counter)
             }
+            // A phone that is somebody's looks at the shelf once per start. Never over the login flow.
+            if (account.session.value != null || counter.isPaired) updater.checkQuietly()
         }
     }
 

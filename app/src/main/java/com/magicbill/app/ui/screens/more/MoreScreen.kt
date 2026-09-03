@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.magicbill.app.BuildConfig
 import com.magicbill.app.nav.Bills
 import com.magicbill.app.nav.Devices
 import com.magicbill.app.nav.Expenses
@@ -37,6 +39,7 @@ import com.magicbill.app.ui.kit.Section
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.theme.IconSize
 import com.magicbill.app.ui.theme.Mb
+import com.magicbill.app.update.Updater
 
 @Composable
 private fun Entry(icon: ImageVector, title: String, subtitle: String? = null, badge: String? = null, onClick: () -> Unit) {
@@ -78,5 +81,17 @@ fun MoreScreen(root: RootViewModel, nav: NavHostController) {
         } else {
             Entry(Icons.Outlined.QrCodeScanner, "Connect to the counter", "Scan the code to take orders") { nav.navigate(PairCounter) }
         }
+        // The app itself: which build this is, and the newer one on GitHub when there is one.
+        val update by root.update.collectAsStateWithLifecycle()
+        val newer = update.releaseOrNull?.takeIf { update is Updater.State.Available || update is Updater.State.Ready || update is Updater.State.Downloading }
+        Entry(
+            Icons.Outlined.SystemUpdate, "App update",
+            subtitle = when {
+                update is Updater.State.Downloading -> "Downloading v${newer?.name}…"
+                newer != null -> "v${newer.name} is ready · you have ${BuildConfig.VERSION_NAME}"
+                else -> "You have ${BuildConfig.VERSION_NAME} · tap to check GitHub"
+            },
+            badge = if (newer != null) "New" else null,
+        ) { root.updater.checkNow() }
     }
 }

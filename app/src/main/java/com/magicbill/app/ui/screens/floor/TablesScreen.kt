@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -158,7 +157,7 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
             }
             val sections = view.tables.groupBy { it.section.ifBlank { "No section" } }
             LazyVerticalGrid(
-                columns = GridCells.Fixed(if (wide) 5 else 3),
+                columns = GridCells.Fixed(if (wide) 4 else 2),
                 horizontalArrangement = Arrangement.spacedBy(Gap.field),
                 verticalArrangement = Arrangement.spacedBy(Gap.field),
                 contentPadding = PaddingValues(bottom = Space.s7),
@@ -228,86 +227,109 @@ fun minutesText(minutes: Int): String =
     if (minutes < 60) "${minutes}m" else "${minutes / 60}h ${(minutes % 60).toString().padStart(2, '0')}m"
 
 /**
- * The table card — the same card the counter draws, so a waiter and a cashier are looking at
- * one thing:
+ * The table card, two to a row on a phone:
  *
- *   number ………………… dot
- *   money · whose          (a free table: "4 seats")
- *   timer · chip …… seats
+ *   SECTION ………………… chip
+ *   7
  *
- * A taken table wears its PERSON's colour as one stripe down the left edge, on the dot and on
- * the name — the same colour that person has on the counter. No fills: waiting and late live
- * in the timer, amber then bold red. One still on its way to the counter breathes.
+ *   ₹1,187 · You             (free: "Free")
+ *   5 items · 8m …… 👥 4
+ *
+ * A taken table says whose it is with ONE stripe down its LEFT edge in the person's colour —
+ * the same colour that person has on the counter — and nothing on the other three sides. No
+ * dot, no coloured ring, no tinted fill: the edge is the signal, the name repeats it in words.
+ * Waiting and late live in the timer, amber then bold red. One still on its way to the
+ * counter breathes.
  */
 @Composable
 private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresholds: Pair<Int, Int>, onClick: () -> Unit) {
     val c = Mb.colors
-    val shape = RoundedCornerShape(Radius.md)
-    val big = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
+    val shape = RoundedCornerShape(Radius.lg)
+    val number = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
     val sending = order != null && (order.sending || order.orderId.startsWith(Floor.PENDING_PREFIX))
-    val person = if (order == null) c.lineSoft else c.person(order.byId)
-    val ring by animateColorAsState(person, label = "tableRing")
+    val person = if (order == null) Color.Transparent else c.person(order.byId)
+    val edge by animateColorAsState(person, label = "tableEdge")
     val minutes = order?.minutes?.let { it + ((now - order.updatedMs) / 60_000).toInt().coerceAtLeast(0) }
     val (warnAfter, lateAfter) = thresholds
     val late = minutes != null && minutes >= lateAfter
     val waiting = !late && minutes != null && minutes >= warnAfter
     val interaction = remember { MutableInteractionSource() }
-    val stripe = with(LocalDensity.current) { 3.dp.toPx() }
+    val stripe = with(LocalDensity.current) { STRIPE.toPx() }
+    val items = order?.let { Floor.parseLines(it.lines).size } ?: 0
     Column(
-        Modifier.aspectRatio(1.05f).pressScale(interaction).clip(shape)
+        Modifier.aspectRatio(1.06f).pressScale(interaction).clip(shape)
             .background(c.surface)
             .border(1.dp, c.lineSoft, shape)
-            // ONE stripe down the left edge in the person's colour — no fill, ever.
-            .drawBehind { if (order != null) drawRect(ring, size = Size(stripe, size.height)) }
+            // ONE stripe down the left edge in the person's colour — the other three sides stay plain.
+            .drawBehind { if (order != null) drawRect(edge, size = Size(stripe, size.height)) }
             .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
-            .padding(start = Space.s3 + 3.dp, end = Space.s3, top = Space.s3, bottom = Space.s3),
+            .padding(start = Space.s4 + STRIPE, end = Space.s3, top = Space.s3, bottom = Space.s3),
     ) {
-        // The number, and the person's dot.
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Text(big, style = Mb.type.stat.copy(fontWeight = FontWeight.Bold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (order != null) Box(Modifier.padding(top = 6.dp).size(8.dp).clip(CircleShape).background(person).pulse(sending))
+        // The section, small, and the chip where the eye lands first.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                t.section.ifBlank { "Table" }.uppercase(),
+                style = Mb.type.label.copy(letterSpacing = 0.8.sp), color = c.inkMuted,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            if (order != null) when {
+                sending -> {}
+                order.settleAsked -> TinyChip("Settle", c.ok, c.okSoft)
+                order.billAsked -> TinyChip("Bill", c.accent, c.accentSoft)
+            }
         }
-        // The money and whose it is — or, free, how big the table is.
+        Text(number, style = Mb.type.stat.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.weight(1f))
         if (order != null) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                Text("₹" + order.total, style = Mb.type.cell.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1)
+            // The money and whose it is.
+            Row(Modifier.fillMaxWidth().pulse(sending), verticalAlignment = Alignment.Bottom) {
+                Text("₹" + order.total, style = Mb.type.stat.copy(fontSize = 17.sp, lineHeight = 22.sp), color = c.ink, maxLines = 1)
                 Spacer(Modifier.width(Space.s2))
                 Text(
                     if (order.mine) "You" else order.by ?: "",
-                    style = Mb.type.caption, color = person, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = Mb.type.caption.copy(fontWeight = FontWeight.Medium), color = person, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
             }
-        } else {
-            Text(if (t.seats > 0) "${t.seats} seats" else "Free", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
-        }
-        Box(Modifier.weight(1f))
-        // The timer and the chip on the left, the seats on the right.
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (order != null) {
-                when {
-                    sending -> Text("Sending…", style = Mb.type.caption, color = c.accent, maxLines = 1)
-                    minutes != null -> Text(
-                        minutesText(minutes),
-                        style = Mb.type.caption.copy(fontWeight = if (late || waiting) FontWeight.Bold else FontWeight.Medium),
-                        color = when { late -> c.danger; waiting -> c.warn; else -> c.inkMuted },
-                        maxLines = 1,
-                    )
+            // The items and the timer on the left, the seats on the right.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (sending) {
+                    Text("Sending…", style = Mb.type.caption, color = c.accent, maxLines = 1)
+                } else {
+                    Text("$items ${if (items == 1) "item" else "items"}", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
+                    if (minutes != null) {
+                        Text(" · ", style = Mb.type.caption, color = c.inkFaint, maxLines = 1)
+                        Text(
+                            minutesText(minutes),
+                            style = Mb.type.caption.copy(fontWeight = if (late || waiting) FontWeight.Bold else FontWeight.Normal),
+                            color = when { late -> c.danger; waiting -> c.warn; else -> c.inkMuted },
+                            maxLines = 1,
+                        )
+                    }
                 }
-                when {
-                    sending -> {}
-                    order.settleAsked -> { Spacer(Modifier.width(Space.s2)); TinyChip("Settle", c.ok, c.okSoft) }
-                    order.billAsked -> { Spacer(Modifier.width(Space.s2)); TinyChip("Bill", c.accent, c.accentSoft) }
-                }
+                Spacer(Modifier.weight(1f))
+                Seats(t.seats)
             }
-            Spacer(Modifier.weight(1f))
-            if (t.seats > 0) {
-                Icon(Icons.Outlined.Group, contentDescription = null, tint = c.inkFaint, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(3.dp))
-                Text("${t.seats}", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Free", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
+                Spacer(Modifier.weight(1f))
+                Seats(t.seats)
             }
         }
     }
+}
+
+/** The stripe's width — the one coloured edge. */
+private val STRIPE = 5.dp
+
+/** "👥 4" on the card's bottom-right; nothing when the counter gave no seat count. */
+@Composable
+private fun Seats(seats: Int) {
+    if (seats <= 0) return
+    Icon(Icons.Outlined.Group, contentDescription = null, tint = Mb.colors.inkFaint, modifier = Modifier.size(14.dp))
+    Spacer(Modifier.width(3.dp))
+    Text("$seats", style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 1)
 }
 
 /** A one-word chip on a card: "Bill", "Settle". */
