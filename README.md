@@ -50,7 +50,7 @@ release's name can be anything. Old builds without a code compare by name.
 
 ```
 # bump versionCode + versionName, commit, push, then:
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" scripts/release.sh v2.0.0 notes.md
+JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" scripts/release.sh v2.5.0 docs/RELEASE-v2.5.0.md
 ```
 
 The script builds the signed APK, writes `version.json`
