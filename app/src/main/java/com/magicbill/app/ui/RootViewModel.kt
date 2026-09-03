@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.Restaurant
 import com.magicbill.app.cloud.Sync
+import com.magicbill.app.core.Clock
 import com.magicbill.app.counter.Counter
 import com.magicbill.app.counter.Credential
 import com.magicbill.app.counter.Floor
@@ -44,6 +45,7 @@ class RootViewModel @Inject constructor(
     private val db: MbDatabase,
     private val floor: Floor,
     private val stream: Stream,
+    private val clock: Clock,
     val updater: Updater,
 ) : ViewModel() {
     /** The shelf's answer, and whether its sheet is up. */
@@ -102,23 +104,43 @@ class RootViewModel @Inject constructor(
                 Boot.ready = true
                 bootedFlow.value = true
             }
-            if (account.session.value != null) {
-                account.refresh()
-                sync.pullIfStale()
-            }
-            if (counter.isPaired) {
-                counter.refreshMe()
-                stream.ensure()
-                // A phone the counter let in but could not sign in to the cloud at the time
-                // (the counter was offline): ask again, every start, until it lands.
-                if (account.session.value == null) account.signInThroughCounter(counter)
-            }
+            refreshWho()
             // A phone that is somebody's looks at the shelf once per start. Never over the login flow.
             if (account.session.value != null || counter.isPaired) updater.checkQuietly()
         }
     }
 
+    private var lastWokeMs = 0L
+
+    /** The app is in front again: the installer it was waiting on, and who this phone is now. */
+    fun resumed() {
+        updater.resumed()
+        if (!bootedFlow.value || clock.now() - lastWokeMs < WAKE_GAP_MS) return
+        viewModelScope.launch(Dispatchers.IO) { refreshWho() }
+    }
+
+    /**
+     * Who this phone is, from the counter and from the cloud — on start and on every return to
+     * the front, so a role changed at the counter reaches the phone without a restart. A paired
+     * phone with no cloud login asks the counter for one each time, until it lands.
+     */
+    private suspend fun refreshWho() {
+        lastWokeMs = clock.now()
+        if (counter.isPaired) {
+            counter.refreshMe()
+            stream.ensure()
+            if (account.session.value == null) account.signInThroughCounter(counter)
+        }
+        if (account.session.value != null) {
+            account.refreshIfStale()
+            sync.pullIfStale()
+        }
+    }
+
     companion object {
+        /** Two returns to the front inside this gap ask once. */
+        private const val WAKE_GAP_MS = 60_000L
+
         fun tabsFor(mayReport: Boolean): List<Tab> =
             if (mayReport) Tab.entries else listOf(Tab.Orders, Tab.Account, Tab.More)
     }

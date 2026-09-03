@@ -131,10 +131,10 @@ fun Shell(vm: RootViewModel) {
     val onTab = tabs.any { t -> backStack?.destination?.hasRoute(t.route()::class) == true }
     val showBar = hasAnything && onTab
 
-    // Back from Settings with "Install unknown apps" switched on: the installer opens by itself.
+    // In front again: who this phone is may have changed while it was away.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.updater.resumed() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.resumed() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }

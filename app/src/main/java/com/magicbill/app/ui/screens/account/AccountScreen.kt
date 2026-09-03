@@ -54,6 +54,7 @@ import javax.inject.Inject
 class AccountViewModel @Inject constructor(private val account: Account, private val counter: Counter, private val floor: com.magicbill.app.counter.Floor, val sync: Sync, val clock: Clock) : ViewModel() {
     val restaurant: StateFlow<Restaurant?> = account.current
     val session: StateFlow<CloudSession?> = account.session
+    val counterLoginSays: StateFlow<String?> = account.counterLoginSays
     val refreshedAt: StateFlow<Long> = account.lastRefreshedMs
     val credential: StateFlow<Credential?> = counter.credential
     val me: StateFlow<Me?> = counter.me
@@ -83,7 +84,7 @@ class AccountViewModel @Inject constructor(private val account: Account, private
         }
     }
 
-    /** Signing out is the whole phone: the cloud login AND the seat at the counter. */
+    /** Signing out is the whole phone: the cloud login AND the seat at the counter, whichever it has. */
     fun signOut(done: () -> Unit) { viewModelScope.launch { floor.forgetAll(); account.signOut(); done() } }
 }
 
@@ -101,6 +102,7 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
     val checking by vm.checking.collectAsStateWithLifecycle()
     val cred by vm.credential.collectAsStateWithLifecycle()
     val me by vm.me.collectAsStateWithLifecycle()
+    val counterSays by vm.counterLoginSays.collectAsStateWithLifecycle()
     val dark by root.dark.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
     val reporter = LocalReporter.current
@@ -119,14 +121,15 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
         Panel {
             val who = s?.email ?: s?.staff?.staffName ?: me?.staffName ?: me?.name
             KeyValue("Name", who ?: "—")
-            KeyValue("Role", r?.role?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: if (cred != null) "At the counter" else "—")
+            // A staff member's role by its name; an owner by their standing.
+            KeyValue("Role", r?.let { it.staff?.roleName ?: it.role.replace('_', ' ').replaceFirstChar { ch -> ch.uppercase() } } ?: if (cred != null) "At the counter" else "—")
             if (cred != null) KeyValue("Counter", cred!!.shopName.ifBlank { "${cred!!.host}:${cred!!.port}" })
         }
         if (s == null) {
-            // On a counter, but no cloud login: the counter was offline when it let this phone
-            // in, or the phone is a shared tablet.
+            // On a counter, but no cloud login: the counter's own reason when it gave one.
             VGap(Gap.field)
-            Notice(Tone.Info, if (cred != null) "Reports and bills need the shop's account. Ask the counter again, or sign in as the owner." else "Sign in as the owner, or scan the counter's code.")
+            if (cred != null && counterSays != null) Notice(Tone.Warn, counterSays!!)
+            else Notice(Tone.Info, if (cred != null) "Reports and bills need the shop's account. Ask the counter again, or sign in as the owner." else "Sign in as the owner, or scan the counter's code.")
             VGap(Gap.field)
             if (cred != null) SecondaryButton(if (checking) "Asking…" else "Ask the counter again", { if (!checking) vm.signInThroughCounter(reporter::say) }, Modifier.fillMaxWidth())
             VGap(Gap.field)
@@ -185,7 +188,7 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
             KeyValue("Magic Bill", BuildConfig.VERSION_NAME)
             if (cred != null) { VGap(Gap.field); SecondaryButton("Me at the counter", onMe, Modifier.fillMaxWidth()) }
         }
-        if (s != null) {
+        if (s != null || cred != null) {
             VGap(Gap.group)
             DangerButton("Sign out of this phone", { leaving = true }, Modifier.fillMaxWidth())
         }
@@ -193,7 +196,14 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
 
     if (leaving) {
         Sheet("Sign out?", onDismiss = { leaving = false }) {
-            Text("The shop's copy on this phone is removed, and the counter forgets this phone. Scanning the code again brings both back.", style = Mb.type.body, color = Mb.colors.inkMuted)
+            Text(
+                when {
+                    s != null && cred != null -> "The shop's copy on this phone is removed, and the counter forgets this phone. Scanning the code again brings both back."
+                    s != null -> "The shop's copy on this phone is removed. Signing in again brings it back."
+                    else -> "The counter forgets this phone. Scanning the code again brings it back."
+                },
+                style = Mb.type.body, color = Mb.colors.inkMuted,
+            )
             VGap(Gap.group)
             DangerButton("Sign out", { leaving = false; vm.signOut(signedOut) }, Modifier.fillMaxWidth())
             VGap(Gap.field)

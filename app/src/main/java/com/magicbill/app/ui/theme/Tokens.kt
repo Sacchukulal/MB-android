@@ -59,6 +59,15 @@ object Target {
     val row = 56.dp
 }
 
+/** A table card on the floor: as many to a row as the width allows, none narrower than [min]. */
+object Tile {
+    val min = 96.dp
+    /** Width to height. */
+    val ratio = 0.9f
+    /** The one coloured edge. */
+    val stripe = 5.dp
+}
+
 /** Motion: short, and nothing on the floor path waits for it. */
 object Motion {
     const val fast = 120
@@ -66,6 +75,7 @@ object Motion {
 }
 
 object IconSize {
+    val xs = 12.dp
     val sm = 16.dp
     val md = 20.dp
     val lg = 28.dp
@@ -113,6 +123,14 @@ class MbType {
     val button = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp)
     /** The brand name on the welcome screen (v1 displaySmall). */
     val brand = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 44.sp)
+    /** The section over a table card's number. */
+    val tileLabel = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = 10.sp, lineHeight = 14.sp, letterSpacing = 0.6.sp)
+    /** The table's number. */
+    val tileNumber = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 28.sp, fontFeatureSettings = tabular)
+    /** The money on a table card. */
+    val tileMoney = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 18.sp, fontFeatureSettings = tabular)
+    /** Whose the table is, the items, the timer, the seats. */
+    val tileNote = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.1.sp, fontFeatureSettings = tabular)
     /** A code somebody types from a screen: the pairing code, the shop code. */
     val code = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 20.sp, lineHeight = 28.sp, letterSpacing = 2.sp)
 }

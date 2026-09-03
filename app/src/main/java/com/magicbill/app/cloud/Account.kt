@@ -36,9 +36,12 @@ class Account @Inject constructor(
     private val list = MutableStateFlow<List<Restaurant>>(emptyList())
     private val chosen = MutableStateFlow<String?>(null)
     private val refreshedAt = MutableStateFlow(0L)
+    private val counterSaid = MutableStateFlow<String?>(null)
 
     val restaurants: StateFlow<List<Restaurant>> get() = list
     val lastRefreshedMs: StateFlow<Long> get() = refreshedAt
+    /** The counter's sentence the last time it could not sign this phone in; null once it has. */
+    val counterLoginSays: StateFlow<String?> get() = counterSaid
 
     /** The shop on screen: the chosen one, else the first. Null until signed in. */
     val current: StateFlow<Restaurant?> = combine(list, chosen) { l, id -> l.firstOrNull { it.id == id } ?: l.firstOrNull() }
@@ -65,9 +68,9 @@ class Account @Inject constructor(
      * when the phone is already signed in — an owner's email login is never replaced.
      */
     suspend fun signInThroughCounter(counter: Counter): Answer<CloudSession> {
-        sessions.current()?.let { android.util.Log.i(CloudLink.TAG, "counter login: already signed in as ${it.kind}"); return Answer.Ok(it) }
+        sessions.current()?.let { android.util.Log.i(CloudLink.TAG, "counter login: already signed in as ${it.kind}"); counterSaid.value = null; return Answer.Ok(it) }
         android.util.Log.i(CloudLink.TAG, "counter login: asking the counter")
-        return withContext(Dispatchers.IO) {
+        val answer: Answer<CloudSession> = withContext(Dispatchers.IO) {
             when (val a = counter.cloudLogin()) {
                 is Answer.Ok -> {
                     val s = cloud.adoptCounterLogin(a.value)
@@ -80,6 +83,14 @@ class Account @Inject constructor(
                 is Answer.SignedOut -> { android.util.Log.w(CloudLink.TAG, "counter login: not paired / refused at the door: ${a.sentence}"); a }
             }
         }
+        counterSaid.value = answer.sentenceOrNull
+        return answer
+    }
+
+    /** The shop again when the last read is older than [minAgeMs]: on a return to the front, never on a timer. */
+    suspend fun refreshIfStale(minAgeMs: Long = 60_000): Answer<List<Restaurant>>? {
+        if (sessions.current() == null || clock.now() - refreshedAt.value < minAgeMs) return null
+        return refresh()
     }
 
     suspend fun refresh(): Answer<List<Restaurant>> = when (val a = cloud.rpc("mb_my_restaurants")) {

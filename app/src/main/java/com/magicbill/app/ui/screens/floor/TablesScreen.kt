@@ -69,10 +69,11 @@ import com.magicbill.app.ui.kit.VGap
 import com.magicbill.app.ui.kit.pressScale
 import com.magicbill.app.ui.kit.pulse
 import com.magicbill.app.ui.theme.Gap
+import com.magicbill.app.ui.theme.IconSize
 import com.magicbill.app.ui.theme.Mb
 import com.magicbill.app.ui.theme.Radius
 import com.magicbill.app.ui.theme.Space
-import com.magicbill.app.ui.theme.isWide
+import com.magicbill.app.ui.theme.Tile
 import com.magicbill.app.ui.theme.person
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -109,10 +110,11 @@ class TablesViewModel @Inject constructor(private val floor: Floor, val stream: 
     /** The live line carries the floor; opening the screen only sends what was queued. */
     fun opened() { stream.ensure(); viewModelScope.launch { floor.flush() } }
 
-    /** Pull down: the snapshot, now. */
+    /** Pull down: who this phone is and the snapshot, now. */
     fun refresh() {
         viewModelScope.launch {
             refreshing.value = true
+            counter.refreshMe()
             floor.refreshCatalogue(); floor.refreshFloor(); floor.flush()
             refreshing.value = false
         }
@@ -135,7 +137,6 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
     val refreshing by vm.isRefreshing.collectAsStateWithLifecycle()
     val thresholds by vm.thresholds.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.opened() }
-    val wide = isWide()
     // The timers on the cards tick by themselves — the counter's minute plus the time since it spoke.
     val now by produceState(System.currentTimeMillis()) {
         while (true) { delay(30_000); value = System.currentTimeMillis() }
@@ -157,7 +158,7 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
             }
             val sections = view.tables.groupBy { it.section.ifBlank { "No section" } }
             LazyVerticalGrid(
-                columns = GridCells.Fixed(if (wide) 4 else 2),
+                columns = GridCells.Adaptive(Tile.min),
                 horizontalArrangement = Arrangement.spacedBy(Gap.field),
                 verticalArrangement = Arrangement.spacedBy(Gap.field),
                 contentPadding = PaddingValues(bottom = Space.s7),
@@ -227,13 +228,14 @@ fun minutesText(minutes: Int): String =
     if (minutes < 60) "${minutes}m" else "${minutes / 60}h ${(minutes % 60).toString().padStart(2, '0')}m"
 
 /**
- * The table card, two to a row on a phone:
+ * The table card, three to a row on a phone and as many as fit on a tablet:
  *
- *   SECTION ………………… chip
+ *   SECTION ……… chip
  *   7
  *
- *   ₹1,187 · You             (free: "Free")
- *   5 items · 8m …… 👥 4
+ *   ₹1,187                  (free: "Free" ……… 👥 4)
+ *   You ………………… 👥 4
+ *   5 items · 8m
  *
  * A taken table says whose it is with ONE stripe down its LEFT edge in the person's colour —
  * the same colour that person has on the counter — and nothing on the other three sides. No
@@ -254,22 +256,22 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
     val late = minutes != null && minutes >= lateAfter
     val waiting = !late && minutes != null && minutes >= warnAfter
     val interaction = remember { MutableInteractionSource() }
-    val stripe = with(LocalDensity.current) { STRIPE.toPx() }
+    val stripe = with(LocalDensity.current) { Tile.stripe.toPx() }
     val items = order?.let { Floor.parseLines(it.lines).size } ?: 0
     Column(
-        Modifier.aspectRatio(1.06f).pressScale(interaction).clip(shape)
+        Modifier.aspectRatio(Tile.ratio).pressScale(interaction).clip(shape)
             .background(c.surface)
             .border(1.dp, c.lineSoft, shape)
             // ONE stripe down the left edge in the person's colour — the other three sides stay plain.
             .drawBehind { if (order != null) drawRect(edge, size = Size(stripe, size.height)) }
             .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
-            .padding(start = Space.s4 + STRIPE, end = Space.s3, top = Space.s3, bottom = Space.s3),
+            .padding(start = Space.s2 + Tile.stripe, end = Space.s2, top = Space.s2, bottom = Space.s2),
     ) {
         // The section, small, and the chip where the eye lands first.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 t.section.ifBlank { "Table" }.uppercase(),
-                style = Mb.type.label.copy(letterSpacing = 0.8.sp), color = c.inkMuted,
+                style = Mb.type.tileLabel, color = c.inkMuted,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
             if (order != null) when {
@@ -278,41 +280,43 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
                 order.billAsked -> TinyChip("Bill", c.accent, c.accentSoft)
             }
         }
-        Text(number, style = Mb.type.stat.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(number, style = Mb.type.tileNumber, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Box(Modifier.weight(1f))
         if (order != null) {
-            // The money and whose it is.
-            Row(Modifier.fillMaxWidth().pulse(sending), verticalAlignment = Alignment.Bottom) {
-                Text("₹" + order.total, style = Mb.type.stat.copy(fontSize = 17.sp, lineHeight = 22.sp), color = c.ink, maxLines = 1)
-                Spacer(Modifier.width(Space.s2))
+            Text("₹" + order.total, style = Mb.type.tileMoney, color = c.ink, maxLines = 1, modifier = Modifier.pulse(sending))
+            // Whose it is on the left, the seats on the right.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (order.mine) "You" else order.by ?: "",
-                    style = Mb.type.caption.copy(fontWeight = FontWeight.Medium), color = person, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = Mb.type.tileNote.copy(fontWeight = FontWeight.Medium), color = person, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                Spacer(Modifier.weight(1f))
+                Seats(t.seats)
             }
-            // The items and the timer on the left, the seats on the right.
+            // The items and the timer; the timer keeps its room, the items give way.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (sending) {
-                    Text("Sending…", style = Mb.type.caption, color = c.accent, maxLines = 1)
+                    Text("Sending…", style = Mb.type.tileNote, color = c.accent, maxLines = 1)
                 } else {
-                    Text("$items ${if (items == 1) "item" else "items"}", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
+                    Text(
+                        "$items ${if (items == 1) "item" else "items"}", style = Mb.type.tileNote, color = c.inkMuted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                    )
                     if (minutes != null) {
-                        Text(" · ", style = Mb.type.caption, color = c.inkFaint, maxLines = 1)
+                        Text(" · ", style = Mb.type.tileNote, color = c.inkFaint, maxLines = 1)
                         Text(
                             minutesText(minutes),
-                            style = Mb.type.caption.copy(fontWeight = if (late || waiting) FontWeight.Bold else FontWeight.Normal),
+                            style = Mb.type.tileNote.copy(fontWeight = if (late || waiting) FontWeight.Bold else FontWeight.Normal),
                             color = when { late -> c.danger; waiting -> c.warn; else -> c.inkMuted },
                             maxLines = 1,
                         )
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                Seats(t.seats)
             }
         } else {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Free", style = Mb.type.caption, color = c.inkMuted, maxLines = 1)
+                Text("Free", style = Mb.type.tileNote, color = c.inkMuted, maxLines = 1)
                 Spacer(Modifier.weight(1f))
                 Seats(t.seats)
             }
@@ -320,22 +324,19 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
     }
 }
 
-/** The stripe's width — the one coloured edge. */
-private val STRIPE = 5.dp
-
-/** "👥 4" on the card's bottom-right; nothing when the counter gave no seat count. */
+/** "👥 4" on the card's right; nothing when the counter gave no seat count. */
 @Composable
 private fun Seats(seats: Int) {
     if (seats <= 0) return
-    Icon(Icons.Outlined.Group, contentDescription = null, tint = Mb.colors.inkFaint, modifier = Modifier.size(14.dp))
-    Spacer(Modifier.width(3.dp))
-    Text("$seats", style = Mb.type.caption, color = Mb.colors.inkMuted, maxLines = 1)
+    Icon(Icons.Outlined.Group, contentDescription = null, tint = Mb.colors.inkFaint, modifier = Modifier.size(IconSize.xs))
+    Spacer(Modifier.width(Space.s1))
+    Text("$seats", style = Mb.type.tileNote, color = Mb.colors.inkMuted, maxLines = 1)
 }
 
 /** A one-word chip on a card: "Bill", "Settle". */
 @Composable
 private fun TinyChip(text: String, ink: Color, fill: Color) {
-    Box(Modifier.clip(RoundedCornerShape(Radius.sm)).background(fill).padding(horizontal = 5.dp, vertical = 1.dp)) {
-        Text(text, style = Mb.type.caption.copy(fontWeight = FontWeight.SemiBold), color = ink, maxLines = 1)
+    Box(Modifier.clip(RoundedCornerShape(Radius.sm)).background(fill).padding(horizontal = Space.s1, vertical = 1.dp)) {
+        Text(text, style = Mb.type.tileLabel.copy(fontWeight = FontWeight.SemiBold), color = ink, maxLines = 1)
     }
 }

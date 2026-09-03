@@ -101,7 +101,7 @@ class Stream @Inject constructor(
             attempt = 0
             stateFlow.value = State.Live
             scope.launch {
-                if (counter.me.value == null) counter.refreshMe() // a phone that never learnt who it is
+                counter.refreshMe() // who this phone is now: the counter may have changed it while the line was down
                 floor.flush() // what was queued while we were away
                 floor.refreshCatalogue() // one cheap 304 when nothing changed
             }
