@@ -269,6 +269,10 @@ data class FloorOrderRow(
     val mine: Boolean,
     /** The bill was asked for from a phone and printed at the counter. */
     val billAsked: Boolean,
+    /** A phone asked the counter to settle it; the cashier confirms there. Cleared by the floor push. */
+    @androidx.room.ColumnInfo(defaultValue = "0") val settleAsked: Boolean = false,
+    /** How long the table had sat when the counter last spoke, by the counter's clock; the tile adds the time since. */
+    val minutes: Int? = null,
     /** Staged here and on its way to the counter; the answer clears it. */
     val sending: Boolean,
     /** Open, or the counter's sentence about why it is not. */

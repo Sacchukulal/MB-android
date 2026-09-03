@@ -13,6 +13,7 @@ import com.magicbill.app.db.MbDatabase
 import com.magicbill.app.ui.theme.ThemeController
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -72,12 +73,27 @@ class RootViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    /**
+     * The boxes are read: the session and the counter credential are known, so the shell may
+     * decide where to start. Before this a signed-in phone looks signed out — the shell
+     * decides its first screen ONCE, so it must not look until this is true.
+     */
+    private val bootedFlow = MutableStateFlow(false)
+    val booted: StateFlow<Boolean> get() = bootedFlow
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            account.load()
-            counter.load()
-            sync.load()
-            Boot.ready = true
+            try {
+                account.load()
+                counter.load()
+                sync.load()
+            } catch (e: Exception) {
+                // A broken box must not hold the splash forever; sign-in says what is wrong.
+                android.util.Log.w("MagicBill", "start-up read failed: $e")
+            } finally {
+                Boot.ready = true
+                bootedFlow.value = true
+            }
             if (account.session.value != null) {
                 account.refresh()
                 sync.pullIfStale()

@@ -6,13 +6,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.magicbill.app.ui.Boot
 import com.magicbill.app.ui.MagicBillRoot
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        // The splash stays until the boxes are read, so the first screen is the right one:
+        // a signed-in phone opens on its tabs, never on Welcome.
+        installSplashScreen().setKeepOnScreenCondition { !Boot.ready }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // A phone is held one way; a tablet is turned to suit the job.

@@ -127,6 +127,8 @@ object Ops {
     fun cancelOrder(reason: String) = buildJsonObject { put("do", "cancel_order"); put("reason", reason) }
     /** The counter prints the bill for the table; the waiter carries it over. */
     fun printBill() = buildJsonObject { put("do", "request_bill") }
+    /** Ask the counter to settle: the cashier confirms there; [payment] is what the customer handed over, if the waiter knows. */
+    fun requestSettle(payment: String?) = buildJsonObject { put("do", "request_settle"); put("payment", payment?.let { JsonPrimitive(it) } ?: JsonNull) }
 }
 
 /** A line of the order as the counter sees it. The money is the counter's. */

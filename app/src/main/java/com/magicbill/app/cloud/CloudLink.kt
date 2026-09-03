@@ -157,7 +157,10 @@ class CloudLink(
                     val fresh = sessionFrom(o, s.kind, email = s.email, staff = s.staff, deviceId = s.deviceId)
                     sessions.save(fresh)
                     Answer.Ok(fresh)
-                } else if (wire.code == 400 || wire.code == 401 || wire.code == 403) {
+                } else if (wire.code in 400..403 && refreshTokenIsDead(o)) {
+                    // The server's own verdict, by name — the one thing that ends a sign-in
+                    // without the person pressing "Sign out". Any other failure keeps the session.
+                    android.util.Log.w(TAG, "refresh: the server says the token is dead (${o?.strOrNull("error_code") ?: o?.strOrNull("error")})")
                     sessions.clear()
                     Answer.SignedOut(Sentences.SIGN_IN_ENDED)
                 } else {
@@ -218,6 +221,19 @@ class CloudLink(
         return CloudSession(kind, o.str("access_token"), o.str("refresh_token"), expiresAt, email, staff, deviceId)
     }
 
+    /**
+     * Supabase names a dead refresh token: `error_code` in its newer replies, `error` +
+     * `error_description` in the older ones. A 4xx that says anything else — a rate limit, an
+     * odd proxy page, an empty body — is treated as "not now", never as "signed out".
+     */
+    private fun refreshTokenIsDead(o: JsonObject?): Boolean {
+        if (o == null) return false
+        val code = o.strOrNull("error_code") ?: o.strOrNull("error") ?: ""
+        if (code in DEAD_TOKEN_CODES) return true
+        val words = (o.strOrNull("error_description") ?: o.strOrNull("msg") ?: o.strOrNull("message") ?: "").lowercase()
+        return "refresh token" in words && ("not found" in words || "already used" in words || "invalid" in words || "expired" in words)
+    }
+
     private fun authSentence(o: JsonObject?): String {
         val code = o?.strOrNull("error_code") ?: o?.strOrNull("error") ?: ""
         return when (code) {
@@ -235,6 +251,11 @@ class CloudLink(
 
     companion object {
         const val TAG = "MagicBill.cloud"
+
+        private val DEAD_TOKEN_CODES = setOf(
+            "invalid_grant", "refresh_token_not_found", "refresh_token_already_used",
+            "session_not_found", "session_expired", "user_not_found", "user_banned",
+        )
 
         /** Deadlines the caller owns. A phone on shop WiFi shared with customers is the reference. */
         fun client(): OkHttpClient = OkHttpClient.Builder()

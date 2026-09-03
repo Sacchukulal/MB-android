@@ -63,6 +63,27 @@ class CloudLinkTest {
         assertNull("the server said the refresh token is dead", sessions.current())
     }
 
+    @Test fun a_4xx_that_does_not_name_a_dead_token_keeps_the_session() = runTest {
+        signedIn()
+        // A rate limit at the auth door, a proxy's HTML page, an empty body: "not now", never "signed out".
+        for (reply in listOf(
+            FakeServer.Reply(400, """{"error_code":"over_request_rate_limit","msg":"Request rate limit reached"}"""),
+            FakeServer.Reply(403, "<html>blocked</html>"),
+            FakeServer.Reply(401, ""),
+        )) {
+            server.once("POST", "/rest/v1/rpc/x", FakeServer.Reply(401))
+            server.once("POST", "/auth/v1/token", reply)
+            val a = link.rpc("x")
+            assertTrue("$reply → $a", a is Answer.Unreachable)
+            assertNotNull("kept after $reply", sessions.current())
+        }
+        // The newer Supabase wording is a verdict too.
+        server.once("POST", "/rest/v1/rpc/x", FakeServer.Reply(401))
+        server.once("POST", "/auth/v1/token", FakeServer.Reply(400, """{"code":400,"error_code":"refresh_token_not_found","msg":"Invalid Refresh Token: Refresh Token Not Found"}"""))
+        assertTrue(link.rpc("x") is Answer.SignedOut)
+        assertNull(sessions.current())
+    }
+
     @Test fun a_token_about_to_expire_is_refreshed_before_the_call() = runTest {
         signedIn(expiresIn = 30_000)
         server.once("POST", "/auth/v1/token?grant_type=refresh_token", FakeServer.Reply(200, """{"access_token":"tok-2","refresh_token":"ref-2","expires_in":3600}"""))

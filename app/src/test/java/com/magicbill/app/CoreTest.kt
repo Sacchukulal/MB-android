@@ -100,3 +100,23 @@ class ArgonTest {
         assertTrue(Argon.verify("4321", a) && Argon.verify("4321", b))
     }
 }
+
+class OverscrollBandTest {
+    @org.junit.Test fun the_band_resists_and_never_reaches_half_the_viewport() {
+        val dim = 2000f
+        val small = com.magicbill.app.ui.theme.RubberBandOverscroll.band(300f, dim)
+        val big = com.magicbill.app.ui.theme.RubberBandOverscroll.band(30_000f, dim)
+        org.junit.Assert.assertTrue("a short pull moves a little: $small", small in 50f..120f)
+        org.junit.Assert.assertTrue("a huge pull stays under half the screen: $big", big < dim * 0.5f && big > dim * 0.4f)
+        org.junit.Assert.assertEquals(-small, com.magicbill.app.ui.theme.RubberBandOverscroll.band(-300f, dim), 0.001f)
+        org.junit.Assert.assertEquals(0f, com.magicbill.app.ui.theme.RubberBandOverscroll.band(0f, dim), 0f)
+    }
+
+    @org.junit.Test fun unband_is_the_inverse_of_band() {
+        val dim = 1800f
+        for (x in listOf(-2500f, -40f, 12f, 600f, 4000f)) {
+            val back = com.magicbill.app.ui.theme.RubberBandOverscroll.unband(com.magicbill.app.ui.theme.RubberBandOverscroll.band(x, dim), dim)
+            org.junit.Assert.assertEquals("$x", x, back, kotlin.math.abs(x) * 0.01f + 0.5f)
+        }
+    }
+}

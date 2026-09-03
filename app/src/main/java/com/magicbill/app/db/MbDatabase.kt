@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         MenuItemRow::class, MenuCategoryRow::class, NoticeRow::class, NoticeReadRow::class,
         CursorRow::class, IntentRow::class, FloorItemRow::class, FloorTableRow::class, FloorOrderRow::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class MbDatabase : RoomDatabase() {
@@ -43,8 +43,17 @@ abstract class MbDatabase : RoomDatabase() {
 
         fun open(context: Context): MbDatabase =
             Room.databaseBuilder(context, MbDatabase::class.java, NAME)
+                .addMigrations(MIGRATION_3_4)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
+
+        /** 3 → 4: a phone may ask the counter to settle a bill; the floor says which ones it did. */
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE floor_orders ADD COLUMN settleAsked INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE floor_orders ADD COLUMN minutes INTEGER")
+            }
+        }
 
         fun inMemory(context: Context): MbDatabase =
             Room.inMemoryDatabaseBuilder(context, MbDatabase::class.java).allowMainThreadQueries().build()

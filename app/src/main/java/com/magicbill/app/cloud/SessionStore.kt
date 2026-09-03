@@ -23,7 +23,12 @@ class SessionStore @Inject constructor(private val box: KeyBox) {
     /** Reads the box. Call off the main thread, once, before anything asks. */
     fun load(): CloudSession? {
         if (!loaded) {
-            state.value = box.get(Secure.CLOUD_SESSION)?.let {
+            // A box that cannot be read right now is NOT an empty box: the session stays
+            // unknown and the next read tries again, rather than the phone looking signed out.
+            val raw = try { box.get(Secure.CLOUD_SESSION) } catch (e: Exception) {
+                android.util.Log.w(CloudLink.TAG, "the secure box could not be read: $e"); return null
+            }
+            state.value = raw?.let {
                 try { MbJson.decodeFromString(CloudSession.serializer(), it) } catch (e: Exception) { null }
             }
             loaded = true

@@ -1,5 +1,6 @@
 package com.magicbill.app.ui.theme
 
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalContentColor
@@ -94,7 +95,13 @@ fun MagicBillTheme(dark: Boolean, content: @Composable () -> Unit) {
         MaterialTheme(colorScheme = schemeOf(colors), typography = typographyOf(mb.type), shapes = MBShapes) {
             // Screens draw on the open canvas, never a Surface — anchor the default text colour,
             // and put the signature glow behind everything.
-            CompositionLocalProvider(LocalContentColor provides colors.ink, LocalTextStyle provides mb.type.body) {
+            // ONE overscroll for every list and page: the rubber band, never the stretch that
+            // re-rasterises the type each frame.
+            CompositionLocalProvider(
+                LocalContentColor provides colors.ink,
+                LocalTextStyle provides mb.type.body,
+                LocalOverscrollFactory provides RubberBandOverscrollFactory,
+            ) {
                 Glow(Modifier.fillMaxSize()) { content() }
             }
         }

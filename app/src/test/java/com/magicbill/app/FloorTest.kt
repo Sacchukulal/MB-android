@@ -42,7 +42,7 @@ class FloorTest {
     private val cred = Credential("192.168.1.7", 7431, "0".repeat(64), "srv_1", "Anna's", "dev_1", "s")
 
     private fun row(id: String, table: String?, label: String?, total: String, token: String?, mine: Boolean = true) =
-        FloorOrderRow(id, table, label, "dine_in", total, token, "[]", null, "Ravi", "stf_1", mine, false, false, null, now)
+        FloorOrderRow(id, table, label, "dine_in", total, token, "[]", null, "Ravi", "stf_1", mine, false, false, null, false, null, now)
 
     @Before fun open() = runTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()

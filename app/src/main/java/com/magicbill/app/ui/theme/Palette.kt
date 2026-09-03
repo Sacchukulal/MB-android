@@ -52,6 +52,12 @@ data class MbColors(
     val upi: Color,
     val credit: Color,
     val otherPay: Color,
+    /**
+     * One colour per PERSON on the floor: a waiter's tables all wear their colour, on the phone
+     * and on the counter alike (the counter's tokens.css lists the same eight, in the same
+     * order, and picks by the same sum). Eight is what a room can tell apart at a glance.
+     */
+    val people: List<Color>,
 )
 
 val LightColors = MbColors(
@@ -85,6 +91,10 @@ val LightColors = MbColors(
     upi = Color(0xFF0D9488),
     credit = Color(0xFFB45309),
     otherPay = Color(0xFF64748B),
+    people = listOf(
+        Color(0xFF0D9488), Color(0xFF2563EB), Color(0xFF7C3AED), Color(0xFFDB2777),
+        Color(0xFFEA580C), Color(0xFFCA8A04), Color(0xFF65A30D), Color(0xFF0284C7),
+    ),
 )
 
 val DarkColors = MbColors(
@@ -118,7 +128,20 @@ val DarkColors = MbColors(
     upi = Color(0xFF2DD4BF),
     credit = Color(0xFFF59E0B),
     otherPay = Color(0xFF94A3B8),
+    people = listOf(
+        Color(0xFF2DD4BF), Color(0xFF60A5FA), Color(0xFFA78BFA), Color(0xFFF472B6),
+        Color(0xFFFB923C), Color(0xFFFACC15), Color(0xFFA3E635), Color(0xFF38BDF8),
+    ),
 )
+
+/**
+ * The one place a person becomes a colour. The sum of the id's characters picks the slot —
+ * the counter does the same sum over the same id, so one waiter is one colour everywhere.
+ * Nobody (an order the counter opened with no person) is the muted ink.
+ */
+fun MbColors.person(id: String?): Color = if (id.isNullOrBlank()) inkMuted else people[personSlot(id, people.size)]
+
+fun personSlot(id: String, slots: Int): Int = id.sumOf { it.code } % slots
 
 /** The one place a payment mode becomes a colour. Unknown modes share one grey. */
 fun MbColors.payment(mode: String): Color = when (mode.lowercase()) {

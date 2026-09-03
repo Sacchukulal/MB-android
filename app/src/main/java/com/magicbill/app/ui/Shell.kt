@@ -106,6 +106,10 @@ fun Tab.route(): Any = when (this) {
 
 @Composable
 fun Shell(vm: RootViewModel) {
+    // Nothing is decided before the boxes are read: a signed-in phone would otherwise start
+    // on Welcome every time it was opened. The splash stays up until this is true.
+    val booted by vm.booted.collectAsStateWithLifecycle()
+    if (!booted) return
     val nav = rememberNavController()
     val hasAnything by vm.hasAnything.collectAsStateWithLifecycle()
     val signedIn by vm.signedIn.collectAsStateWithLifecycle()
@@ -120,6 +124,13 @@ fun Shell(vm: RootViewModel) {
 
     // What the counter said — once, wherever the phone is.
     LaunchedEffect(Unit) { vm.counterSays.collect { reporter.say(it) } }
+
+    // A login that lands while the phone sits on Welcome — the counter signing a paired phone
+    // in at start — moves it to its first tab. Only from Welcome, which has nothing in flight;
+    // a sign-in or pairing screen finishes itself.
+    LaunchedEffect(hasAnything, backStack) {
+        if (hasAnything && backStack?.destination?.hasRoute(Welcome::class) == true) nav.home(vm)
+    }
 
     // Back on a tab: twice within two seconds leaves the app. Never a dead end, never a surprise.
     var lastBack by remember { mutableLongStateOf(0L) }

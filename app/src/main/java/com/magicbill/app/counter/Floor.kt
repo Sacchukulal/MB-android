@@ -6,6 +6,7 @@ import com.magicbill.app.core.MbJson
 import com.magicbill.app.core.Sentences
 import com.magicbill.app.core.arr
 import com.magicbill.app.core.bool
+import com.magicbill.app.core.intOrNull
 import com.magicbill.app.core.newId
 import com.magicbill.app.core.objects
 import com.magicbill.app.core.parseJsonOrNull
@@ -22,6 +23,8 @@ import com.magicbill.app.prefs.Secure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -179,7 +182,7 @@ class Floor @Inject constructor(
             FloorOrderRow(
                 orderId = PENDING_PREFIX + batchId, tableId = place.tableId, tableLabel = place.tableLabel, orderType = place.orderType,
                 total = estimate, token = null, lines = linesJson(pendingLines), note = note, by = counter.me.value?.name, byId = counter.me.value?.staffId,
-                mine = true, billAsked = false, sending = true, closedSays = null, updatedMs = now,
+                mine = true, billAsked = false, settleAsked = false, sending = true, closedSays = null, updatedMs = now,
             )
         } else {
             db.floor().order(orderId)?.let { existing ->
@@ -216,6 +219,7 @@ class Floor @Inject constructor(
             val what = parseJsonOrNull(row.what) as? JsonObject
             val closes = what?.str("do") == "cancel_order"
             val asksBill = what?.str("do") == "request_bill"
+            val asksSettle = what?.str("do") == "request_settle"
             db.floor().putOrder(
                 FloorOrderRow(
                     orderId = outcome.orderId,
@@ -233,6 +237,8 @@ class Floor @Inject constructor(
                     byId = existing?.byId ?: counter.me.value?.staffId,
                     mine = existing?.mine ?: true,
                     billAsked = asksBill || (existing?.billAsked ?: false),
+                    settleAsked = asksSettle || (existing?.settleAsked ?: false),
+                    minutes = existing?.minutes,
                     sending = false,
                     closedSays = if (closes) "This order was cancelled." else null,
                     updatedMs = clock.now(),
@@ -246,6 +252,10 @@ class Floor @Inject constructor(
             }
         }
     }
+
+    /** Warn and late, in minutes, as the counter's own tiles use them; the counter's defaults until it speaks. */
+    private val thresholdsFlow = MutableStateFlow(20 to 45)
+    val thresholds: StateFlow<Pair<Int, Int>> get() = thresholdsFlow
 
     /** What the stream says (LAN_PROTOCOL.md §4). Unknown kinds are ignored — a counter one version ahead is an ordinary Tuesday. */
     suspend fun apply(push: Push) {
@@ -263,6 +273,7 @@ class Floor @Inject constructor(
      */
     suspend fun takeFloor(body: JsonObject) {
         val now = clock.now()
+        body.intOrNull("warn_minutes")?.let { w -> body.intOrNull("late_minutes")?.let { l -> thresholdsFlow.value = w to l } }
         val myStaff = counter.me.value?.staffId
         for (t in body.arr("tables").objects()) {
             val id = t.str("id")
@@ -297,6 +308,8 @@ class Floor @Inject constructor(
                     byId = byId ?: row?.byId,
                     mine = (byId != null && byId == myStaff) || (row?.mine ?: false),
                     billAsked = o.bool("bill_asked"),
+                    settleAsked = o.bool("settle_asked"),
+                    minutes = o.intOrNull("minutes") ?: row?.minutes,
                     // A push while an addition is on its way keeps the tile quiet until the
                     // batch answers; the answer clears it.
                     sending = row?.sending ?: false,

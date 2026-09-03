@@ -122,13 +122,14 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     var reasonFor by remember { mutableStateOf<String?>(null) } // "void:<line>" | "cancel"
     var moving by remember { mutableStateOf(false) }
     var noting by remember { mutableStateOf(false) }
+    var settling by remember { mutableStateOf(false) }
     val o = view.order
     val closed = o?.closedSays
     val title = o?.tableLabel?.let { "Table $it" } ?: o?.orderType?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Order"
     val subtitle = listOfNotNull(o?.token?.let { "Token #$it" }, o?.by?.takeIf { o.mine != true }?.let { "$it's order" }).joinToString(" · ").ifBlank { null }
 
     Page(title, subtitle, back = back, scroll = false, bottomPadding = 0.dp, actions = {
-        if (o?.billAsked == true) Badge("Bill printed", Tone.Ok)
+        if (o?.settleAsked == true) Badge("Settle asked", Tone.Ok) else if (o?.billAsked == true) Badge("Bill printed", Tone.Ok)
         StreamBadge(stream)
         if (closed == null) IconAction(Icons.Outlined.MoreVert, "More", { more = true })
     }) {
@@ -173,6 +174,14 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                     if (unsent) SecondaryButton("Send to kitchen", { vm.send(Ops.sendToKitchen(), "Send to kitchen", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending)
                     SecondaryButton(if (o.billAsked) "Print bill again" else "Print bill", { vm.send(Ops.printBill(), "Print the bill", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending && view.lines.isNotEmpty())
                 }
+                // The waiter asks; somebody at the counter confirms with one key. The money is
+                // still taken at the counter.
+                SecondaryButton(
+                    if (o.settleAsked) "Settle asked — ask again" else "Settle bill",
+                    { settling = true },
+                    Modifier.fillMaxWidth(),
+                    enabled = !busy && !o.sending && view.lines.isNotEmpty(),
+                )
                 VGap(Space.s2)
             }
         }
@@ -189,6 +198,18 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             PrimaryButton("Change to $qty", { lineMenu = null; vm.send(Ops.setQty(l.line, qty), "$qty × ${l.name}", reporter::say) }, Modifier.fillMaxWidth(), enabled = qty != l.qty)
             VGap(Gap.field)
             SecondaryButton("Take it off the order", { lineMenu = null; reasonFor = "void:${l.line}:${l.name}" }, Modifier.fillMaxWidth())
+        }
+    }
+
+    if (settling && o != null) {
+        Sheet("Settle ₹" + o.total, onDismiss = { settling = false }) {
+            Text("How did they pay? The counter confirms it.", style = Mb.type.body, color = Mb.colors.inkMuted)
+            VGap(Gap.field)
+            for ((word, mode) in listOf("Cash" to "cash", "Card" to "card", "UPI" to "upi")) {
+                ListRow(word, onClick = { settling = false; vm.send(Ops.requestSettle(mode), "Settle the bill", reporter::say) })
+            }
+            ListRow("Not sure — the counter decides", onClick = { settling = false; vm.send(Ops.requestSettle(null), "Settle the bill", reporter::say) })
+            VGap(Gap.field)
         }
     }
 
