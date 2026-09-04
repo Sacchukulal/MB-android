@@ -135,4 +135,19 @@ class CloudLinkTest {
         assertTrue("the phone made no call of its own", server.sent.isEmpty())
         assertNull(link.adoptCounterLogin(kotlinx.serialization.json.buildJsonObject { }))
     }
+
+    @Test fun the_websites_sign_up_is_kept_as_the_owners_session_without_a_call() = runTest {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"type":"signed-in","accessToken":"w","refreshToken":"wr","expiresAt":1000003600,"email":"o@x.in","restaurantId":"r1","licenceKey":"MB-1111-2222-3333"}""",
+        ) as kotlinx.serialization.json.JsonObject
+        val ok = link.adoptWebsiteLogin(o)!!
+        assertEquals(CloudSession.Kind.OWNER, ok.kind)
+        assertEquals("o@x.in", ok.email)
+        // The website counts in seconds; the phone keeps milliseconds.
+        assertEquals(1_000_003_600_000L, ok.expiresAtMs)
+        assertEquals("w", sessions.current()?.accessToken)
+        assertTrue("the phone made no call of its own", server.sent.isEmpty())
+        // A message with no tokens in it is not a login.
+        assertNull(link.adoptWebsiteLogin(buildJsonObject { put("type", "signed-in") }))
+    }
 }

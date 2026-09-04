@@ -6,6 +6,10 @@ import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.CloudLink
 import com.magicbill.app.cloud.Sync
 import com.magicbill.app.core.Answer
+import com.magicbill.app.core.asObjectOrNull
+import com.magicbill.app.core.parseJsonOrNull
+import com.magicbill.app.core.str
+import com.magicbill.app.core.strOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +23,14 @@ class SignInViewModel @Inject constructor(
     private val account: Account,
     private val sync: Sync,
 ) : ViewModel() {
-    data class State(val busy: Boolean = false, val sentence: String? = null, val done: Boolean = false, val noShop: Boolean = false)
+    data class State(
+        val busy: Boolean = false,
+        val sentence: String? = null,
+        val done: Boolean = false,
+        val noShop: Boolean = false,
+        /** The key the sign-up just bought, shown once before the app takes over. Never on a password login. */
+        val licenceKey: String? = null,
+    )
 
     private val stateFlow = MutableStateFlow(State())
     val state: StateFlow<State> get() = stateFlow
@@ -35,12 +46,32 @@ class SignInViewModel @Inject constructor(
         }
     }
 
-    private suspend fun afterSignIn() {
+    /**
+     * The sign-up finished in the app's own window: magicbill.in hands back the session it just
+     * made, and this phone becomes that owner's phone. A message that is not that is ignored —
+     * the page keeps going and the person can still finish there.
+     */
+    fun fromWebsite(payload: String) {
+        val state = stateFlow.value
+        if (state.busy || state.done) return
+        val o = parseJsonOrNull(payload)?.asObjectOrNull() ?: return
+        if (o.str("type") != "signed-in") return
+        stateFlow.value = State(busy = true)
+        viewModelScope.launch {
+            if (cloud.adoptWebsiteLogin(o) == null) {
+                stateFlow.value = State(sentence = "That sign-up came back without a login. Sign in with your email instead.")
+                return@launch
+            }
+            afterSignIn(o.strOrNull("licenceKey"))
+        }
+    }
+
+    private suspend fun afterSignIn(licenceKey: String? = null) {
         when (val r = account.refresh()) {
             is Answer.Ok -> {
                 if (r.value.isEmpty()) { stateFlow.value = State(noShop = true); return }
                 sync.pullIfStale(minAgeMs = 0)
-                stateFlow.value = State(done = true)
+                stateFlow.value = State(done = true, licenceKey = licenceKey)
             }
             // Signed in, but the shop list could not come. Letting the person in here left a phone
             // signed in with nothing on it and no way back (2026-08-29). Sign it out again and say why.

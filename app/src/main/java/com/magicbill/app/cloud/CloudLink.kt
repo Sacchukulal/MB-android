@@ -81,6 +81,24 @@ class CloudLink(
         return s
     }
 
+    /**
+     * The login the WEBSITE handed back from the sign-up the app opened in its own window: the
+     * very session that browser holds, passed over a bridge magicbill.in alone can reach. Kept
+     * as an owner's session, exactly as a password login would be. Null when the message
+     * carried no tokens.
+     */
+    fun adoptWebsiteLogin(o: JsonObject): CloudSession? {
+        val access = o.str("accessToken")
+        val refresh = o.str("refreshToken")
+        if (access.isBlank() || refresh.isBlank()) return null
+        // The website sends seconds, as Supabase does; a missing one is treated as an hour so
+        // the first call refreshes rather than fails.
+        val expiresAt = o.long("expiresAt").takeIf { it > 0 }?.times(1000) ?: (clock.now() + 3_600_000)
+        val s = CloudSession(CloudSession.Kind.OWNER, access, refresh, expiresAt, email = o.strOrNull("email"))
+        sessions.save(s)
+        return s
+    }
+
     suspend fun signOut() {
         val s = sessions.current()
         sessions.clear()

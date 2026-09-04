@@ -52,6 +52,7 @@ import com.magicbill.app.nav.NewOrder
 import com.magicbill.app.nav.Notices
 import com.magicbill.app.nav.OrderScreen
 import com.magicbill.app.nav.OwnerSignIn
+import com.magicbill.app.nav.OwnerSignUp
 import com.magicbill.app.nav.PairCounter
 import com.magicbill.app.nav.Queue
 import com.magicbill.app.nav.Reports
@@ -86,6 +87,7 @@ import com.magicbill.app.ui.screens.pair.NeedsCloudScreen
 import com.magicbill.app.ui.screens.pair.PairScreen
 import com.magicbill.app.ui.screens.reports.ReportsScreen
 import com.magicbill.app.ui.screens.signin.OwnerSignInScreen
+import com.magicbill.app.ui.screens.signin.OwnerSignUpScreen
 import com.magicbill.app.ui.screens.signin.WelcomeScreen
 import com.magicbill.app.ui.screens.staff.RoleEditScreen
 import com.magicbill.app.ui.screens.staff.StaffEditScreen
@@ -196,7 +198,8 @@ fun Shell(vm: RootViewModel) {
                     ) {
                         // The two doors. An owner signs in; a staff phone scans the counter's code.
                         composable<Welcome> { WelcomeScreen(onOwner = { nav.navigate(OwnerSignIn) }, onStaff = { nav.navigate(PairCounter) }) }
-                        composable<OwnerSignIn> { OwnerSignInScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
+                        composable<OwnerSignIn> { OwnerSignInScreen(back = { nav.popBackStack() }, signUp = { nav.navigate(OwnerSignUp) }, done = { nav.home(vm) }) }
+                        composable<OwnerSignUp> { OwnerSignUpScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
                         composable<PairCounter> { PairScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
 
                         // The five tabs. A screen that needs the cloud says so when the phone has

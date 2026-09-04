@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable object Welcome
 @Serializable object OwnerSignIn
+/** magicbill.in's sign-up, inside the app: an account, a plan, a licence key, then a session. */
+@Serializable object OwnerSignUp
 /** The one door for a staff phone, and the owner's door to the floor: scan the counter's code. */
 @Serializable object PairCounter
 

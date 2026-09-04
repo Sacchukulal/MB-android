@@ -18,7 +18,7 @@ decisions are in `../docs/ANDROID_ROUND.md`.
   NEW project `grjhdszcvuomgluaqncf`), `MB_KEYSTORE_*`. Never hardcode; never commit `keys/`.
 - Release signing MUST use `keys/magic-bill-release.keystore` (alias `magicbill`) — the same
   cert as every published build, or phones cannot update in place. Debug builds are signed
-  with it too. `versionCode` only ever goes up (17 = 3.0.0, 21 = 2.5.0, 22 = 2.5.1 — the GitHub line continues from 2.4.6): the
+  with it too. `versionCode` only ever goes up (17 = 3.0.0, 21 = 2.5.0, 22 = 2.5.1, 23 = 2.5.2 — the GitHub line continues from 2.4.6): the
   phone's updater (`update/Updater.kt`) compares codes from the shelf's `version.json`, never names.
 - Release: `scripts/release.sh vX.Y.Z notes.md` (see README → Releasing).
 
@@ -61,5 +61,12 @@ test forbids `MaterialTheme.colorScheme`/`typography` in screens and any second 
 - **The floor is the whole floor.** Every open order is on the phone (`by`/`mine` say whose);
   tapping any taken table opens that order.
 - **The counter's sentences are shown as-is.** The phone composes nothing on top of a refusal.
+- **Signing UP is the website's job, in the app's own window.** `ui/screens/signin/SignUpScreen.kt`
+  opens magicbill.in's `/signup?plan=…` in a WebView — straight to the plan cards, so the free
+  trial is not offered there. The account, the plan, the payment and the
+  licence key are all made there. When the shop has a licence the site posts the session over
+  `androidx.webkit`'s message listener — injected into magicbill.in's frames and nowhere else —
+  and `CloudLink.adoptWebsiteLogin` keeps it as the owner's session. No account, plan or
+  payment screen is written twice on the phone. The website half is `MB-website/src/lib/in-app.ts`.
 - **Colour is never the only signal**; every raw hex lives in `ui/theme/Palette.kt`.
 - StrictMode kills a debug build that touches the network on the main thread.

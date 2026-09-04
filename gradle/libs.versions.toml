@@ -13,6 +13,9 @@ navigationCompose = "2.9.8"
 room = "2.8.4"
 splashscreen = "1.2.0"
 securityCrypto = "1.1.0"
+# The in-app sign-up's WebView: the origin-checked message listener the website hands the
+# session back over, so no JavaScript interface is exposed to any page but ours.
+webkit = "1.14.0"
 zxing = "3.5.4"
 okhttp = "5.4.0"
 coroutines = "1.11.0"
@@ -30,6 +33,7 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }

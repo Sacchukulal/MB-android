@@ -60,7 +60,7 @@ fun WelcomeScreen(onOwner: () -> Unit, onStaff: () -> Unit) {
 }
 
 @Composable
-fun OwnerSignInScreen(back: () -> Unit, done: () -> Unit, vm: SignInViewModel = hiltViewModel()) {
+fun OwnerSignInScreen(back: () -> Unit, signUp: () -> Unit, done: () -> Unit, vm: SignInViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -81,6 +81,12 @@ fun OwnerSignInScreen(back: () -> Unit, done: () -> Unit, vm: SignInViewModel = 
             SecondaryButton("Use another account", { vm.signOut() }, Modifier.fillMaxWidth())
         } else {
             PrimaryButton("Sign in", { tried = true; if (emailOk && password.isNotEmpty()) vm.owner(email, password) }, Modifier.fillMaxWidth(), busy = state.busy)
+            // No account yet: magicbill.in's sign-up opens inside the app, and the phone signs
+            // itself in the moment the shop has its licence.
+            VGap(Gap.group)
+            Text("New to Magic Bill?", style = Mb.type.caption, color = Mb.colors.inkMuted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            VGap(Gap.field)
+            SecondaryButton("Create an account", signUp, Modifier.fillMaxWidth())
         }
     }
 }
