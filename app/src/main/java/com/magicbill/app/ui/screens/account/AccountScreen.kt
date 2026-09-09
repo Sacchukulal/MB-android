@@ -162,9 +162,11 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
             else if (lic == null) Notice(Tone.Warn, "This shop has no licence yet. Set one up at magicbill.in.")
             else Panel {
                 KeyValue("Plan", lic.planName.ifBlank { lic.plan })
-                KeyValue("Status", lic.status.replaceFirstChar { it.uppercase() }, valueColor = when (lic.status) { "active", "trial" -> Mb.colors.ok; "suspended", "revoked" -> Mb.colors.danger; else -> Mb.colors.warn })
+                KeyValue("Status", lic.standing.replace('_', ' ').replaceFirstChar { it.uppercase() }, valueColor = when { lic.standing == "active" || lic.standing == "trial" -> Mb.colors.ok; !lic.operating -> Mb.colors.danger; else -> Mb.colors.warn })
+                if (lic.standing != "active") Text(lic.sentence, style = Mb.type.body, color = Mb.colors.inkMuted)
                 lic.trialEndsOn?.let { KeyValue("Trial ends", it) }
-                lic.renewsOn?.let { KeyValue("Renews on", it) }
+                lic.renewsOn?.let { KeyValue(if (lic.standing == "ending" || lic.standing == "ended") "Runs until" else "Renews on", it) }
+                if (lic.standing == "grace") lic.runsUntil?.let { KeyValue("Works until", it) }
                 KeyValue("Counter", if (lic.bound) (lic.boundDevice?.name ?: "Activated") else "Not activated yet")
                 lic.boundDevice?.lastSeenAt?.let { Ist.parseTs(it) }?.let { KeyValue("Counter last spoke to the cloud", Ist.ago(it, vm.clock.now())) }
                 lic.boundDevice?.appVersion?.takeIf { it.isNotBlank() }?.let { KeyValue("Counter version", it) }

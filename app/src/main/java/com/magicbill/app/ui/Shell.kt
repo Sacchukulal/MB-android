@@ -88,6 +88,7 @@ import com.magicbill.app.ui.screens.pair.PairScreen
 import com.magicbill.app.ui.screens.reports.ReportsScreen
 import com.magicbill.app.ui.screens.signin.OwnerSignInScreen
 import com.magicbill.app.ui.screens.signin.OwnerSignUpScreen
+import com.magicbill.app.ui.screens.signin.PlanDoorScreen
 import com.magicbill.app.ui.screens.signin.WelcomeScreen
 import com.magicbill.app.ui.screens.staff.RoleEditScreen
 import com.magicbill.app.ui.screens.staff.StaffEditScreen
@@ -121,6 +122,7 @@ fun Shell(vm: RootViewModel) {
     val nav = rememberNavController()
     val hasAnything by vm.hasAnything.collectAsStateWithLifecycle()
     val signedIn by vm.signedIn.collectAsStateWithLifecycle()
+    val planDoor by vm.planDoor.collectAsStateWithLifecycle()
     val cred by vm.credential.collectAsStateWithLifecycle()
     val tabs by vm.tabs.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -204,12 +206,16 @@ fun Shell(vm: RootViewModel) {
 
                         // The five tabs. A screen that needs the cloud says so when the phone has
                         // no cloud login; Orders says so when the phone is not on a counter.
+                        // The door: a shop whose plan is not running shows why, and the way to
+                        // magicbill.in, in place of its data.
                         composable<Home> {
                             if (!signedIn) NeedsCloudScreen(onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) })
+                            else if (planDoor != null) PlanDoorScreen(planDoor!!, onCheckAgain = vm::checkPlan)
                             else { val unreadNow by vm.unread.collectAsStateWithLifecycle(); HomeScreen(onNotices = { nav.navigate(Notices) }, unread = unreadNow) }
                         }
                         composable<Reports> {
                             if (!signedIn) NeedsCloudScreen(onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) })
+                            else if (planDoor != null) PlanDoorScreen(planDoor!!, onCheckAgain = vm::checkPlan)
                             else ReportsScreen(openBill = { nav.navigate(BillDetail(it)) })
                         }
                         composable<Tables> {

@@ -35,7 +35,14 @@ import com.magicbill.app.ui.theme.Gap
  * `mb_my_restaurants`, so there is nothing to type back into the phone.
  */
 @Composable
-fun NoShopYet(checking: Boolean, onCheckAgain: () -> Unit, onUseAnother: (() -> Unit)? = null) {
+fun NoShopYet(
+    checking: Boolean,
+    onCheckAgain: () -> Unit,
+    onUseAnother: (() -> Unit)? = null,
+    /** Why the door is closed: no shop, or a shop whose plan is not running. */
+    sentence: String = NO_SHOP_SENTENCE,
+    tone: Tone = Tone.Info,
+) {
     val context = LocalContext.current
     val reporter = LocalReporter.current
     var wentToSite by remember { mutableStateOf(false) }
@@ -49,7 +56,7 @@ fun NoShopYet(checking: Boolean, onCheckAgain: () -> Unit, onUseAnother: (() -> 
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
 
-    Notice(Tone.Info, "Your account is ready. Your shop needs a plan: choose one at magicbill.in, signed in there with the same email and password. This phone opens the shop when you come back.")
+    Notice(tone, sentence)
     VGap(Gap.field)
     PrimaryButton("Choose a plan at magicbill.in", {
         if (openInBrowser(context, CloudLink.PLAN_PAGE)) wentToSite = true else reporter.say("This phone has no browser to open magicbill.in with.")
@@ -69,3 +76,6 @@ fun openInBrowser(context: Context, url: String): Boolean = try {
 } catch (e: ActivityNotFoundException) {
     false
 }
+
+/** A signed-in account that owns no shop yet. */
+const val NO_SHOP_SENTENCE = "Your account is ready. Your shop needs a plan: choose one at magicbill.in, signed in there with the same email and password. This phone opens the shop when you come back."

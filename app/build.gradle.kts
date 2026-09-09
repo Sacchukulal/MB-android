@@ -25,8 +25,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // Must only ever go up: the phone compares codes to decide whether an update is newer.
-        versionCode = 24
-        versionName = "2.5.3"
+        versionCode = 25
+        versionName = "2.5.4"
 
         // The cloud's public address and anon key. Public by design (RLS is the wall), but kept
         // out of the source so the secret scanner has nothing to find in .kt.

@@ -93,25 +93,56 @@ data class Licence(
     val features: List<String>,
     val renewsOn: String?,
     val trialEndsOn: String?,
+    /**
+     * The cloud's own word for the state (PHONE_API.md §1): active · grace · trial ·
+     * trial_ended · ending · ended · unpaid · expired · suspended · revoked. Never re-derived.
+     */
+    val standing: String,
+    /** The last day the shop works, grace included; null when it never does. */
+    val runsUntil: String?,
+    /** May the counter and this phone be used today? The cloud decides. */
+    val operating: Boolean,
     /** Owners only; null for staff. Shown masked, revealed on a press. */
     val key: String?,
     val bound: Boolean,
     val boundDevice: BoundDevice?,
 ) {
+    /** One sentence for the person, from the standing. */
+    val sentence: String get() = when (standing) {
+        "active" -> "Active" + (renewsOn?.let { " until $it" } ?: "") + "."
+        "grace" -> "The payment due on ${renewsOn ?: "the renewal date"} has not come through. Everything keeps working until ${runsUntil ?: "the end of grace"}."
+        "trial" -> "Free trial" + (trialEndsOn?.let { " until $it" } ?: "") + "."
+        "trial_ended" -> "The trial ended on ${trialEndsOn ?: "its date"}. Choose a plan at magicbill.in to carry on."
+        "ending" -> "Renewal is switched off. The plan runs until ${renewsOn ?: "its date"}; after that the counter and this app stop."
+        "ended" -> "The plan ended on ${renewsOn ?: "its date"}. Choose a plan at magicbill.in to carry on."
+        "unpaid" -> "This shop has no plan yet. Choose one at magicbill.in."
+        "expired" -> "The plan ran out on ${renewsOn ?: "its date"}. Renew at magicbill.in to carry on."
+        "suspended" -> "This shop's licence is suspended. Please contact Magic Bill."
+        "revoked" -> "This shop's licence has been stopped. Please contact Magic Bill."
+        else -> "Licence: $standing."
+    }
+
     companion object {
-        fun parse(o: JsonObject) = Licence(
-            status = o.str("status"),
+        fun parse(o: JsonObject): Licence {
+            val status = o.str("status")
+            return Licence(
+            status = status,
             plan = o.str("plan"),
             planName = o.str("plan_name"),
             features = o.strings("features"),
             renewsOn = o.strOrNull("renews_on"),
             trialEndsOn = o.strOrNull("trial_ends_on"),
+            standing = o.strOrNull("standing") ?: status,
+            runsUntil = o.strOrNull("runs_until"),
+            // An older cloud that does not say: the status alone, the way it was read before.
+            operating = if (o.containsKey("operating")) o.bool("operating") else status == "active" || status == "trial",
             key = o.strOrNull("key"),
             bound = o.bool("bound"),
             boundDevice = o.obj("bound_device")?.let {
                 BoundDevice(it.str("id"), it.str("name"), it.strOrNull("last_seen_at"), it.str("app_version"))
             },
-        )
+            )
+        }
     }
 }
 

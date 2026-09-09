@@ -125,16 +125,11 @@ fun HomeScreen(onNotices: () -> Unit, unread: Int, vm: HomeViewModel = hiltViewM
             },
         ) {
             val lic = r?.licence
-            if (lic != null && lic.status != "active") {
+            // The cloud's own word for the plan; nothing to say while it is simply active.
+            if (lic != null && lic.standing != "active") {
                 Notice(
-                    when (lic.status) { "trial" -> Tone.Info; "suspended", "revoked" -> Tone.Danger; else -> Tone.Warn },
-                    when (lic.status) {
-                        "trial" -> "Free trial" + (lic.trialEndsOn?.let { " until $it" } ?: "") + "."
-                        "suspended" -> "This shop's licence is suspended. The counter still bills; reports stop when it lapses."
-                        "revoked" -> "This shop's licence has been revoked."
-                        "cancelled" -> "Renewal is switched off" + (lic.renewsOn?.let { "; runs until $it" } ?: "") + "."
-                        else -> "Licence: ${lic.status}."
-                    },
+                    when (lic.standing) { "trial" -> Tone.Info; "suspended", "revoked" -> Tone.Danger; else -> Tone.Warn },
+                    lic.sentence,
                 )
                 VGap(Gap.field)
             }

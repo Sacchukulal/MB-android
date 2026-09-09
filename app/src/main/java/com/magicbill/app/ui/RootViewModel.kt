@@ -67,6 +67,27 @@ class RootViewModel @Inject constructor(
     val mayReport: StateFlow<Boolean> = account.current.map { r -> r != null && (r.isOwner || "reports.view" in r.permissions) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /**
+     * The door: the sentence to show instead of Home and Reports while the shop's plan is not
+     * running, null while it is. The cloud decides (`licence.operating`); a shop with no
+     * licence row at all is a door too.
+     */
+    val planDoor: StateFlow<String?> = account.current.map { r ->
+        when {
+            r == null -> null
+            r.licence == null -> "This shop has no plan yet. Choose one at magicbill.in."
+            r.licence.operating -> null
+            else -> r.licence.sentence
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Somebody pressed Check again at the door, or came back from the website: ask the cloud now. */
+    fun checkPlan() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (account.refresh() is com.magicbill.app.core.Answer.Ok) sync.pullIfStale(minAgeMs = 0)
+        }
+    }
+
     /** The bar: Home and Reports only when they would show something. */
     val tabs: StateFlow<List<Tab>> = mayReport.map { may -> tabsFor(may) }.stateIn(viewModelScope, SharingStarted.Eagerly, tabsFor(false))
 
