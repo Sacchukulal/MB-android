@@ -27,8 +27,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
 /**
- * The one HTTP client for the cloud (PHONE_API.md). Two auth endpoints, PostgREST RPC and
- * REST, one refresh on a 401, and nothing else. Every call has a deadline from the client;
+ * The one HTTP client for the cloud (PHONE_API.md). Two auth endpoints, the website's sign-up
+ * route, PostgREST RPC and REST, one refresh on a 401, and nothing else. Every call has a deadline from the client;
  * every reply becomes an [Answer]. Nothing metered is called from here at all: a staff phone's
  * login is fetched by the counter and only kept here.
  */
@@ -39,6 +39,8 @@ class CloudLink(
     private val sessions: SessionStore,
     private val clock: Clock = Clock.system,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** The website: its sign-up route, and the pages a browser is sent to. */
+    private val siteUrl: String = SITE_URL,
 ) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private val refreshing = Mutex()
@@ -82,21 +84,34 @@ class CloudLink(
     }
 
     /**
-     * The login the WEBSITE handed back from the sign-up the app opened in its own window: the
-     * very session that browser holds, passed over a bridge magicbill.in alone can reach. Kept
-     * as an owner's session, exactly as a password login would be. Null when the message
-     * carried no tokens.
+     * A new owner's account, made by the website's own sign-up route so the site and the phone
+     * share one sign-up: the login is pre-confirmed, and the name, mobile and shop details ride
+     * in the user's metadata for the trial or the plan to use later. The phone then signs in
+     * with the same email and password. No shop exists after this until a plan is chosen.
      */
-    fun adoptWebsiteLogin(o: JsonObject): CloudSession? {
-        val access = o.str("accessToken")
-        val refresh = o.str("refreshToken")
-        if (access.isBlank() || refresh.isBlank()) return null
-        // The website sends seconds, as Supabase does; a missing one is treated as an hour so
-        // the first call refreshes rather than fails.
-        val expiresAt = o.long("expiresAt").takeIf { it > 0 }?.times(1000) ?: (clock.now() + 3_600_000)
-        val s = CloudSession(CloudSession.Kind.OWNER, access, refresh, expiresAt, email = o.strOrNull("email"))
-        sessions.save(s)
-        return s
+    suspend fun signUp(form: SignUp): Answer<Unit> {
+        val body = buildJsonObject {
+            put("name", form.name.trim())
+            put("restaurantName", form.restaurantName.trim())
+            put("restaurantAddress", form.restaurantAddress.trim())
+            put("phone", form.phone.filter { it.isDigit() })
+            put("email", form.email.trim())
+            put("password", form.password)
+        }
+        val request = Request.Builder().url("$siteUrl/api/auth/signup").header("Content-Type", "application/json")
+            .post(body.toString().toRequestBody(jsonType)).build()
+        return when (val wire = send(request)) {
+            is Wire.Failed -> Answer.Unreachable(Sentences.SITE_UNREACHABLE)
+            is Wire.Http -> {
+                val said = parseJsonOrNull(wire.body)?.asObjectOrNull()?.strOrNull("error")?.takeIf { it.isNotBlank() }
+                when {
+                    wire.code in 200..299 -> Answer.Ok(Unit)
+                    wire.code == 429 -> Answer.Refused(said ?: tooManySentence(wire.retryAfter), "too_many", wire.retryAfter)
+                    wire.code in 400..499 -> Answer.Refused(said ?: "Magic Bill did not accept that.", if (wire.code == 409) "exists" else null)
+                    else -> Answer.Unreachable(said ?: Sentences.SITE_UNREACHABLE)
+                }
+            }
+        }
     }
 
     suspend fun signOut() {
@@ -269,6 +284,9 @@ class CloudLink(
 
     companion object {
         const val TAG = "MagicBill.cloud"
+        const val SITE_URL = "https://www.magicbill.in"
+        /** Where a signed-in owner with no shop yet picks a plan. Opened in the phone's browser. */
+        const val PLAN_PAGE = "$SITE_URL/dashboard"
 
         private val DEAD_TOKEN_CODES = setOf(
             "invalid_grant", "refresh_token_not_found", "refresh_token_already_used",

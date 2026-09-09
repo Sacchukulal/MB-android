@@ -4,19 +4,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.CloudLink
+import com.magicbill.app.cloud.SignUp
 import com.magicbill.app.cloud.Sync
 import com.magicbill.app.core.Answer
-import com.magicbill.app.core.asObjectOrNull
-import com.magicbill.app.core.parseJsonOrNull
-import com.magicbill.app.core.str
-import com.magicbill.app.core.strOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** The owner's sign-in. One state shape: busy, a sentence, done. A staff phone never signs in here. */
+/**
+ * The owner's sign-in and sign-up. One state shape: busy, a sentence, done, or signed in with
+ * no shop yet. A staff phone never signs in here.
+ */
 @HiltViewModel
 class SignInViewModel @Inject constructor(
     private val cloud: CloudLink,
@@ -27,9 +27,8 @@ class SignInViewModel @Inject constructor(
         val busy: Boolean = false,
         val sentence: String? = null,
         val done: Boolean = false,
+        /** Signed in, but the account owns no shop: a plan is chosen on the website first. */
         val noShop: Boolean = false,
-        /** The key the sign-up just bought, shown once before the app takes over. Never on a password login. */
-        val licenceKey: String? = null,
     )
 
     private val stateFlow = MutableStateFlow(State())
@@ -46,32 +45,40 @@ class SignInViewModel @Inject constructor(
         }
     }
 
-    /**
-     * The sign-up finished in the app's own window: magicbill.in hands back the session it just
-     * made, and this phone becomes that owner's phone. A message that is not that is ignored —
-     * the page keeps going and the person can still finish there.
-     */
-    fun fromWebsite(payload: String) {
-        val state = stateFlow.value
-        if (state.busy || state.done) return
-        val o = parseJsonOrNull(payload)?.asObjectOrNull() ?: return
-        if (o.str("type") != "signed-in") return
+    /** The account is made by the website's route, then this phone signs in with it. */
+    fun signUp(form: SignUp) {
+        if (stateFlow.value.busy) return
         stateFlow.value = State(busy = true)
         viewModelScope.launch {
-            if (cloud.adoptWebsiteLogin(o) == null) {
-                stateFlow.value = State(sentence = "That sign-up came back without a login. Sign in with your email instead.")
-                return@launch
+            when (val made = cloud.signUp(form)) {
+                is Answer.Ok -> when (val login = cloud.passwordLogin(form.email, form.password)) {
+                    is Answer.Ok -> afterSignIn()
+                    else -> stateFlow.value = State(sentence = "Your account is made, but this phone could not sign in: ${login.sentenceOrNull} Sign in with your email and password.")
+                }
+                else -> stateFlow.value = State(sentence = made.sentenceOrNull)
             }
-            afterSignIn(o.strOrNull("licenceKey"))
         }
     }
 
-    private suspend fun afterSignIn(licenceKey: String? = null) {
+    /** Signed in with no shop: the person has been to the website, or pressed the button. */
+    fun checkAgain() {
+        if (stateFlow.value.busy) return
+        stateFlow.value = State(noShop = true, busy = true)
+        viewModelScope.launch {
+            when (val r = account.refresh()) {
+                is Answer.Ok -> if (r.value.isEmpty()) stateFlow.value = State(noShop = true) else { sync.pullIfStale(minAgeMs = 0); stateFlow.value = State(done = true) }
+                is Answer.SignedOut -> stateFlow.value = State(sentence = r.sentence)
+                else -> stateFlow.value = State(noShop = true, sentence = r.sentenceOrNull)
+            }
+        }
+    }
+
+    private suspend fun afterSignIn() {
         when (val r = account.refresh()) {
             is Answer.Ok -> {
                 if (r.value.isEmpty()) { stateFlow.value = State(noShop = true); return }
                 sync.pullIfStale(minAgeMs = 0)
-                stateFlow.value = State(done = true, licenceKey = licenceKey)
+                stateFlow.value = State(done = true)
             }
             // Signed in, but the shop list could not come. Letting the person in here left a phone
             // signed in with nothing on it and no way back (2026-08-29). Sign it out again and say why.

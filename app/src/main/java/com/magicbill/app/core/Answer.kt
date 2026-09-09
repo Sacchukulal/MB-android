@@ -37,6 +37,7 @@ object Sentences {
     const val NOT_SIGNED_IN = "Sign in to see this."
     const val SIGN_IN_ENDED = "Your sign-in has ended. Sign in again."
     const val NOT_PAIRED = "This phone is not connected to a counter yet."
+    const val SITE_UNREACHABLE = "Could not reach magicbill.in. Check this phone's internet and try again."
 }
 
 fun newId(): String = UUID.randomUUID().toString()

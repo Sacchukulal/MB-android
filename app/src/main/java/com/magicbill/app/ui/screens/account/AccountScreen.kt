@@ -43,6 +43,7 @@ import com.magicbill.app.ui.kit.Section
 import com.magicbill.app.ui.kit.Sheet
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
+import com.magicbill.app.ui.screens.signin.NoShopYet
 import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.Mb
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -141,13 +142,13 @@ fun AccountScreen(root: RootViewModel, onOwner: () -> Unit, onPair: () -> Unit, 
             // no licence. Only the last one is about a licence.
             if (r == null) {
                 Section("Your shop")
-                Notice(
-                    if (refreshed > 0) Tone.Warn else Tone.Danger,
-                    if (refreshed > 0) "This account has no shop yet. Set one up at magicbill.in, then check again."
-                    else "Your shop has not been read from Magic Bill yet. Check again when this phone is online.",
-                )
-                VGap(Gap.field)
-                SecondaryButton(if (checking) "Checking…" else "Check again", { if (!checking) vm.checkAgain { reporter.say(it) } }, Modifier.fillMaxWidth())
+                if (refreshed > 0) {
+                    NoShopYet(checking, onCheckAgain = { if (!checking) vm.checkAgain { reporter.say(it) } })
+                } else {
+                    Notice(Tone.Danger, "Your shop has not been read from Magic Bill yet. Check again when this phone is online.")
+                    VGap(Gap.field)
+                    SecondaryButton(if (checking) "Checking…" else "Check again", { if (!checking) vm.checkAgain { reporter.say(it) } }, Modifier.fillMaxWidth())
+                }
             } else {
                 Section("The shop")
                 Panel {

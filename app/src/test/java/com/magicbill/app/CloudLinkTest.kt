@@ -3,6 +3,7 @@ package com.magicbill.app
 import com.magicbill.app.cloud.CloudLink
 import com.magicbill.app.cloud.CloudSession
 import com.magicbill.app.cloud.SessionStore
+import com.magicbill.app.cloud.SignUp
 import com.magicbill.app.core.Answer
 import com.magicbill.app.core.Clock
 import com.magicbill.app.prefs.MemoryBox
@@ -20,7 +21,7 @@ class CloudLinkTest {
     private val box = MemoryBox()
     private val sessions = SessionStore(box)
     private var now = 1_000_000_000_000L
-    private val link = CloudLink("https://cloud.test", "anon-key", server.client(), sessions, Clock { now })
+    private val link = CloudLink("https://cloud.test", "anon-key", server.client(), sessions, Clock { now }, siteUrl = "https://site.test")
 
     private fun signedIn(expiresIn: Long = 3_600_000) {
         sessions.save(CloudSession(CloudSession.Kind.OWNER, "tok-1", "ref-1", now + expiresIn, "o@x.in"))
@@ -136,18 +137,35 @@ class CloudLinkTest {
         assertNull(link.adoptCounterLogin(kotlinx.serialization.json.buildJsonObject { }))
     }
 
-    @Test fun the_websites_sign_up_is_kept_as_the_owners_session_without_a_call() = runTest {
-        val o = kotlinx.serialization.json.Json.parseToJsonElement(
-            """{"type":"signed-in","accessToken":"w","refreshToken":"wr","expiresAt":1000003600,"email":"o@x.in","restaurantId":"r1","licenceKey":"MB-1111-2222-3333"}""",
-        ) as kotlinx.serialization.json.JsonObject
-        val ok = link.adoptWebsiteLogin(o)!!
-        assertEquals(CloudSession.Kind.OWNER, ok.kind)
-        assertEquals("o@x.in", ok.email)
-        // The website counts in seconds; the phone keeps milliseconds.
-        assertEquals(1_000_003_600_000L, ok.expiresAtMs)
-        assertEquals("w", sessions.current()?.accessToken)
-        assertTrue("the phone made no call of its own", server.sent.isEmpty())
-        // A message with no tokens in it is not a login.
-        assertNull(link.adoptWebsiteLogin(buildJsonObject { put("type", "signed-in") }))
+    @Test fun a_sign_up_goes_to_the_websites_route_with_the_sites_own_fields() = runTest {
+        server.once("POST", "/api/auth/signup", FakeServer.Reply(200, """{"ok":true}"""))
+        val form = SignUp(" Asha ", "Anna Kuteera", "12 MG Road, Udupi", "98765 01234", " Asha@x.in", "secret-pw")
+        assertTrue(link.signUp(form) is Answer.Ok)
+        val s = server.sent.single()
+        assertEquals("/api/auth/signup", s.path)
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(s.body) as kotlinx.serialization.json.JsonObject
+        assertEquals("Asha", (o["name"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("Anna Kuteera", (o["restaurantName"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("12 MG Road, Udupi", (o["restaurantAddress"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("9876501234", (o["phone"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("Asha@x.in", (o["email"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("secret-pw", (o["password"] as kotlinx.serialization.json.JsonPrimitive).content)
+        // The website's route, not the cloud's: no anon key, and no session until the login.
+        assertNull(s.headers["apikey"])
+        assertNull(sessions.current())
+    }
+
+    @Test fun the_websites_refusal_is_shown_as_it_was_written() = runTest {
+        val form = SignUp("Asha", "Anna", "Udupi", "9876501234", "a@x.in", "secret-pw")
+        server.once("POST", "/api/auth/signup", FakeServer.Reply(409, """{"error":"An account with this email already exists — try logging in."}"""))
+        val taken = link.signUp(form) as Answer.Refused
+        assertEquals("An account with this email already exists — try logging in.", taken.sentence)
+        assertEquals("exists", taken.code)
+
+        server.once("POST", "/api/auth/signup", FakeServer.Reply(429, """{"error":"Too many attempts. Try again in a minute."}"""))
+        assertEquals("Too many attempts. Try again in a minute.", (link.signUp(form) as Answer.Refused).sentence)
+
+        server.fail("/api/auth/signup")
+        assertTrue(link.signUp(form) is Answer.Unreachable)
     }
 }

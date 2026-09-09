@@ -36,6 +36,17 @@ data class StaffIdentity(
     val staffName: String,
 )
 
+/** What the website's sign-up asks for; the phone asks for exactly the same. */
+data class SignUp(
+    val name: String,
+    val restaurantName: String,
+    val restaurantAddress: String,
+    /** Ten digits; the site adds +91. */
+    val phone: String,
+    val email: String,
+    val password: String,
+)
+
 /** One row of `mb_my_restaurants()`. */
 data class Restaurant(
     val id: String,
