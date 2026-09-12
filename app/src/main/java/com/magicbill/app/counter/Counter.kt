@@ -113,11 +113,15 @@ class Counter @Inject constructor(
         return c
     }
 
-    /** `GET /v1/me`; a 401 here means revoked, and the counter's sentence is kept for the screen. */
+    /**
+     * `GET /v1/me`; a 401 here means revoked, and the counter's sentence is kept for the screen
+     * — until the counter knows the phone again, which clears it. Nothing here drops the
+     * credential: only the person's own Sign out or Disconnect does that.
+     */
     suspend fun refreshMe(): Answer<Me> {
         val c = cred.value ?: return Answer.SignedOut(Sentences.NOT_PAIRED)
         return when (val a = link.me(c)) {
-            is Answer.Ok -> { meState.value = a.value; secure.put(ME, meJson(a.value)); a }
+            is Answer.Ok -> { meState.value = a.value; secure.put(ME, meJson(a.value)); revoked.value = null; a }
             is Answer.SignedOut -> { revoked.value = a.sentence; a }
             is Answer.Refused -> { android.util.Log.w("MagicBill", "/v1/me refused: ${a.sentence}"); a }
             is Answer.Unreachable -> { android.util.Log.w("MagicBill", "/v1/me unreachable: ${a.sentence}"); a }

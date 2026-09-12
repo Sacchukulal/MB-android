@@ -167,6 +167,11 @@ class Floor @Inject constructor(
         val now = clock.now()
         val whereLabel = place.tableLabel?.let { "table $it" } ?: place.orderType.replace('_', ' ')
         val batchId = newId()
+        val existing = orderId?.let { db.floor().order(it) }
+        // The order's ONE note for the kitchen, set before the ticket goes: on a new order when
+        // there is one, on an open order whenever it changed — cleared counts as changed.
+        val kept = note?.trim()?.ifBlank { null }
+        val noteChanged = kept != existing?.note?.trim()?.ifBlank { null }
         val rows = buildList {
             if (orderId == null) {
                 add(IntentRow(batchId, null, now, Ops.openOrder(place.orderType, place.tableId, null).toString(), "Open $whereLabel", place.tableLabel, "queued", null, now, null, 0))
@@ -174,7 +179,7 @@ class Floor @Inject constructor(
             lines.forEach { l ->
                 add(IntentRow(newId(), orderId, now, Ops.addItem(l.itemId, l.qty, l.note).toString(), "${l.qty} × ${l.name}", place.tableLabel, "queued", null, now, null, 0))
             }
-            if (!note.isNullOrBlank()) add(IntentRow(newId(), orderId, now, Ops.setOrderNote(note).toString(), "Order note", place.tableLabel, "queued", null, now, null, 0))
+            if (noteChanged) add(IntentRow(newId(), orderId, now, Ops.setOrderNote(kept).toString(), "Note for the kitchen", place.tableLabel, "queued", null, now, null, 0))
             add(IntentRow(newId(), orderId, now, Ops.sendToKitchen().toString(), "Send $whereLabel to the kitchen", place.tableLabel, "queued", null, now, null, 0))
         }
         // The floor shows it NOW: a new order as a sending tile, an addition as sending lines
@@ -183,13 +188,13 @@ class Floor @Inject constructor(
         val pending = if (orderId == null) {
             FloorOrderRow(
                 orderId = PENDING_PREFIX + batchId, tableId = place.tableId, tableLabel = place.tableLabel, orderType = place.orderType,
-                total = estimate, token = null, lines = linesJson(pendingLines), note = note, by = counter.me.value?.name, byId = counter.me.value?.staffId,
+                total = estimate, token = null, lines = linesJson(pendingLines), note = kept, by = counter.me.value?.name, byId = counter.me.value?.staffId,
                 mine = true, billAsked = false, settleAsked = false, sending = true, closedSays = null, updatedMs = now,
             )
         } else {
-            db.floor().order(orderId)?.let { existing ->
-                val have = parseLines(existing.lines)
-                existing.copy(lines = linesJson(have + pendingLines.map { it.copy(line = have.size + it.line) }), sending = true, updatedMs = now)
+            existing?.let {
+                val have = parseLines(it.lines)
+                it.copy(lines = linesJson(have + pendingLines.map { p -> p.copy(line = have.size + p.line) }), note = kept, sending = true, updatedMs = now)
             }
         }
         db.floor().stage(rows, pending)

@@ -3,6 +3,7 @@ package com.magicbill.app.ui.screens.floor
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,8 +39,10 @@ import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.FloorOrderRow
 import com.magicbill.app.db.FloorTableRow
 import com.magicbill.app.nav.OrderScreen
+import com.magicbill.app.ui.kit.Arrives
 import com.magicbill.app.ui.kit.Badge
 import com.magicbill.app.ui.kit.ChipRow
+import com.magicbill.app.ui.kit.held
 import com.magicbill.app.ui.kit.Empty
 import com.magicbill.app.ui.kit.Field
 import com.magicbill.app.ui.kit.IconAction
@@ -122,12 +125,11 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     val reporter = LocalReporter.current
     LaunchedEffect(Unit) { vm.opened() }
     // The header alone for the instant before the database answers.
-    val view = loaded ?: run { Page(vm.title, back = back) {}; return }
+    val view = held(loaded) ?: run { Page(vm.title, back = back) {}; return }
     var lineMenu by remember { mutableStateOf<LineView?>(null) }
     var more by remember { mutableStateOf(false) }
     var reasonFor by remember { mutableStateOf<String?>(null) } // "void:<line>" | "cancel"
     var moving by remember { mutableStateOf(false) }
-    var noting by remember { mutableStateOf(false) }
     var settling by remember { mutableStateOf(false) }
     val o = view.order
     val closed = o?.closedSays
@@ -141,11 +143,13 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     }) {
         if (closed != null) { Notice(Tone.Info, closed, action = { SecondaryButton("Back", back) }); VGap(Gap.field) }
         if (o == null) { Empty("This order is not on the phone."); return@Page }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+        Arrives(Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxSize()) {
             if (view.lines.isEmpty()) item { Empty("Nothing on this order yet. Add the first dish.") }
             items(view.lines, key = { it.line }) { l ->
                 ListRow(
                     "${l.qty} × ${l.name}", l.note,
+                    modifier = Modifier.animateItem(),
                     trailing = {
                         Column(horizontalAlignment = Alignment.End) {
                             if (l.amount.isNotBlank()) Text("₹" + l.amount, style = Mb.type.cell, color = Mb.colors.ink)
@@ -162,9 +166,11 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             item {
                 VGap(Gap.field)
                 KeyValue("Total", "₹" + o.total, bold = true)
+                // The kitchen's note rides with the order; it is changed where dishes are added.
                 o.note?.takeIf { it.isNotBlank() }?.let { KeyValue("Note", it) }
                 VGap(Space.s7)
             }
+        }
         }
         if (closed == null) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Gap.field)) {
@@ -222,7 +228,6 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     if (more) {
         Sheet(null, onDismiss = { more = false }) {
             ListRow("Move to another table", onClick = { more = false; moving = true })
-            ListRow("Note for the kitchen", o?.note, onClick = { more = false; noting = true })
             ListRow("Cancel this order", onClick = { more = false; reasonFor = "cancel" }, titleColor = Mb.colors.danger)
         }
     }
@@ -252,15 +257,6 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             Column(Modifier.heightIn(max = 360.dp)) {
                 LazyColumn { items(free, key = { it.id }) { t -> ListRow("Table ${t.label}", t.section, onClick = { moving = false; vm.send(Ops.moveTable(t.id), "Move to table ${t.label}", reporter::say) }) } }
             }
-        }
-    }
-
-    if (noting) {
-        Sheet("Note for the kitchen", onDismiss = { noting = false }) {
-            var note by remember { mutableStateOf(o?.note ?: "") }
-            Field(note, { note = it }, "Note", placeholder = "Less spicy, serve together…", ime = ImeAction.Done)
-            VGap(Gap.group)
-            PrimaryButton("Save the note", { noting = false; vm.send(Ops.setOrderNote(note.ifBlank { null }), "Order note", reporter::say) }, Modifier.fillMaxWidth())
         }
     }
 }

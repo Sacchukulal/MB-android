@@ -125,9 +125,9 @@ class PairViewModel @Inject constructor(
                     stepFlow.value = Step.Busy("Signing in…")
                     // The counter has just written the credential; a first miss is tried once more.
                     android.util.Log.i("MagicBill", "paired; asking for the cloud login")
-                    if (account.signInThroughCounter(counter) !is Answer.Ok) {
+                    if (account.signInThroughCounter() !is Answer.Ok) {
                         kotlinx.coroutines.delay(1_500)
-                        account.signInThroughCounter(counter)
+                        account.signInThroughCounter()
                     }
                     floor.refreshCatalogue(force = true)
                     stepFlow.value = Step.Done

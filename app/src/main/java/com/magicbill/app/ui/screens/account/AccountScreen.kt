@@ -80,7 +80,7 @@ class AccountViewModel @Inject constructor(private val account: Account, private
     fun signInThroughCounter(say: (String) -> Unit) {
         viewModelScope.launch {
             checking.value = true
-            say(when (val a = account.signInThroughCounter(counter)) { is com.magicbill.app.core.Answer.Ok -> "Signed in."; else -> a.sentenceOrNull ?: "The counter could not sign this phone in." })
+            say(when (val a = account.signInThroughCounter()) { is com.magicbill.app.core.Answer.Ok -> "Signed in."; else -> a.sentenceOrNull ?: "The counter could not sign this phone in." })
             checking.value = false
         }
     }

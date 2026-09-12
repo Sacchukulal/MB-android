@@ -1,5 +1,7 @@
 package com.magicbill.app.ui.kit
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,10 +37,18 @@ import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.magicbill.app.ui.theme.Gap
+import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
 import com.magicbill.app.ui.theme.Radius
 import com.magicbill.app.ui.theme.Space
@@ -77,6 +88,40 @@ fun Page(
         val body = Modifier.fillMaxWidth().let { if (scroll) it.verticalScroll(rememberScrollState()) else it }
         Column(body.padding(start = Gap.page, end = Gap.page, bottom = bottomPadding)) { content() }
     }
+}
+
+/** True while the page this content is on is opening, closing or otherwise in motion. The shell provides it. */
+val LocalPageMoving = compositionLocalOf { false }
+
+/**
+ * A value that arrives while the page is moving waits until the page has landed. The rows
+ * from the database come a moment after the page opens; composing and measuring them in the
+ * middle of the move cost a whole frame on every phone. Held, they arrive when the page is
+ * still, and [Arrives] fades them in. A value already there when the page is still is used
+ * at once.
+ */
+@Composable
+fun <T> held(value: T): T {
+    val moving = LocalPageMoving.current
+    var shown by remember { mutableStateOf(value) }
+    if (!moving && shown == value) return value
+    LaunchedEffect(value, moving) { if (!moving) shown = value }
+    return shown
+}
+
+/**
+ * Content that arrives after its page — the rows from the database, a moment behind the
+ * header — fades up into place instead of popping in mid-motion. [ready] false keeps it
+ * unseen until it is. The fade is modulated per draw, never an offscreen copy.
+ * Content ready on the page's first frame does not fade: the page itself is fading in
+ * then, and a second fade inside it only repaints the page on every frame of the open.
+ */
+@Composable
+fun Arrives(modifier: Modifier = Modifier, ready: Boolean = true, content: @Composable () -> Unit) {
+    var shown by remember { mutableStateOf(ready) }
+    LaunchedEffect(ready) { shown = ready }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(MBMotion.DurShort, easing = MBMotion.EaseOut), label = "arrives")
+    Box(modifier.graphicsLayer { this.alpha = alpha; compositingStrategy = CompositingStrategy.ModulateAlpha }) { content() }
 }
 
 /** Large title + optional circular raised back button. */
@@ -122,7 +167,7 @@ fun Section(title: String, trailing: (@Composable () -> Unit)? = null, first: Bo
 fun Panel(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(vertical = Space.s2), onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     val m = modifier.fillMaxWidth()
         .clip(RoundedCornerShape(Radius.lg))
-        .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+        .let { if (onClick != null) it.launchPoint().clickable(onClick = onClick) else it }
         .padding(padding)
     Column(m) { content() }
 }
@@ -146,15 +191,16 @@ fun KeyValue(label: String, value: String, valueColor: Color? = null, bold: Bool
 fun ListRow(
     title: String,
     subtitle: String? = null,
+    modifier: Modifier = Modifier,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     titleColor: Color? = null,
 ) {
     Row(
-        Modifier.fillMaxWidth()
+        modifier.fillMaxWidth()
             .clip(RoundedCornerShape(Radius.lg))
-            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .let { if (onClick != null) it.launchPoint().clickable(onClick = onClick) else it }
             .padding(horizontal = 4.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

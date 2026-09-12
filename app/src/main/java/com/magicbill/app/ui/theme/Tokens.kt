@@ -64,14 +64,10 @@ object Tile {
     val min = 96.dp
     /** Width to height. */
     val ratio = 0.9f
-    /** The one coloured edge. */
+    /** The thick edge in the person's colour. */
     val stripe = 5.dp
-}
-
-/** Motion: short, and nothing on the floor path waits for it. */
-object Motion {
-    const val fast = 120
-    const val normal = 200
+    /** The thin line in the same colour round the other three sides. */
+    val line = 1.dp
 }
 
 object IconSize {

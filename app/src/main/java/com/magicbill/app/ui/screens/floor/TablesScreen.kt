@@ -67,6 +67,7 @@ import com.magicbill.app.ui.kit.Page
 import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
+import com.magicbill.app.ui.kit.launchPoint
 import com.magicbill.app.ui.kit.pressScale
 import com.magicbill.app.ui.kit.pulse
 import com.magicbill.app.ui.theme.Gap
@@ -175,7 +176,7 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
                     }
                     items(tables, key = { it.id }) { t ->
                         val order = view.onTable[t.id]
-                        TableCard(t, order, now, thresholds) {
+                        TableCard(t, order, now, thresholds, Modifier.animateItem()) {
                             if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(OrderScreen(order.orderId, orderTitle(order.tableLabel, order.orderType)))
                             else if (order == null) openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
                         }
@@ -239,20 +240,21 @@ fun minutesText(minutes: Int): String =
  *   You ………………… 👥 4
  *   5 items · 8m
  *
- * A taken table says whose it is with ONE stripe down its LEFT edge in the person's colour —
- * the same colour that person has on the counter — and nothing on the other three sides. No
- * dot, no coloured ring, no tinted fill: the edge is the signal, the name repeats it in words.
- * Waiting and late live in the timer, amber then bold red. One still on its way to the
- * counter breathes.
+ * A taken table says whose it is in the person's colour — the same colour that person has on
+ * the counter: a THICK stripe down the LEFT edge and a thin line in the same colour round
+ * the other three sides, the way the counter draws it. No dot, no tinted fill: the edge is
+ * the signal, the name repeats it in words. Waiting and late live in the timer, amber then
+ * bold red. One still on its way to the counter breathes.
  */
 @Composable
-private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresholds: Pair<Int, Int>, onClick: () -> Unit) {
+private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresholds: Pair<Int, Int>, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = Mb.colors
     val shape = RoundedCornerShape(Radius.lg)
     val number = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
     val sending = order != null && (order.sending || order.orderId.startsWith(Floor.PENDING_PREFIX))
     val person = if (order == null) Color.Transparent else c.person(order.byId)
     val edge by animateColorAsState(person, label = "tableEdge")
+    val line by animateColorAsState(if (order == null) c.lineSoft else person, label = "tableLine")
     val minutes = order?.minutes?.let { it + ((now - order.updatedMs) / 60_000).toInt().coerceAtLeast(0) }
     val (warnAfter, lateAfter) = thresholds
     val late = minutes != null && minutes >= lateAfter
@@ -261,11 +263,12 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
     val stripe = with(LocalDensity.current) { Tile.stripe.toPx() }
     val items = order?.let { Floor.parseLines(it.lines).size } ?: 0
     Column(
-        Modifier.aspectRatio(Tile.ratio).pressScale(interaction).clip(shape)
+        modifier.aspectRatio(Tile.ratio).pressScale(interaction).clip(shape)
             .background(c.surface)
-            .border(1.dp, c.lineSoft, shape)
-            // ONE stripe down the left edge in the person's colour — the other three sides stay plain.
+            // The thin line round all four sides; the stripe covers it on the left.
+            .border(Tile.line, line, shape)
             .drawBehind { if (order != null) drawRect(edge, size = Size(stripe, size.height)) }
+            .launchPoint()
             .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
             .padding(start = Space.s2 + Tile.stripe, end = Space.s2, top = Space.s2, bottom = Space.s2),
     ) {

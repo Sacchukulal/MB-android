@@ -150,7 +150,7 @@ class RootViewModel @Inject constructor(
         if (counter.isPaired) {
             counter.refreshMe()
             stream.ensure()
-            if (account.session.value == null) account.signInThroughCounter(counter)
+            if (account.session.value == null) account.signInThroughCounter()
         }
         if (account.session.value != null) {
             account.refreshIfStale()

@@ -31,6 +31,7 @@ class Account @Inject constructor(
     private val secure: Secure,
     private val db: MbDatabase,
     private val clock: Clock,
+    private val counter: Counter,
     @AppScope private val scope: CoroutineScope,
 ) {
     private val list = MutableStateFlow<List<Restaurant>>(emptyList())
@@ -67,7 +68,7 @@ class Account @Inject constructor(
      * cloud for the person it bound this phone to and passes the login through. Nothing to do
      * when the phone is already signed in — an owner's email login is never replaced.
      */
-    suspend fun signInThroughCounter(counter: Counter): Answer<CloudSession> {
+    suspend fun signInThroughCounter(): Answer<CloudSession> {
         sessions.current()?.let { android.util.Log.i(CloudLink.TAG, "counter login: already signed in as ${it.kind}"); counterSaid.value = null; return Answer.Ok(it) }
         android.util.Log.i(CloudLink.TAG, "counter login: asking the counter")
         val answer: Answer<CloudSession> = withContext(Dispatchers.IO) {
@@ -104,7 +105,22 @@ class Account @Inject constructor(
         }
         is Answer.Refused -> { android.util.Log.w(CloudLink.TAG, "my restaurants refused: ${a.code} ${a.sentence}"); a }
         is Answer.Unreachable -> { android.util.Log.w(CloudLink.TAG, "my restaurants unreachable"); a }
-        is Answer.SignedOut -> { android.util.Log.w(CloudLink.TAG, "my restaurants: signed out — ${a.sentence}"); forget(); a }
+        is Answer.SignedOut -> { android.util.Log.w(CloudLink.TAG, "my restaurants: signed out — ${a.sentence}"); loginEnded(); a }
+    }
+
+    /**
+     * The cloud says this login is over. A phone on a counter got its login FROM the counter,
+     * so it asks there for a fresh one and keeps everything it has: a staff phone is never
+     * signed out by a token running its course. Only a phone that is on no counter — an
+     * owner's own email login — is signed out, and only because the server said so.
+     */
+    private suspend fun loginEnded() {
+        if (counter.isPaired) {
+            android.util.Log.i(CloudLink.TAG, "counter login: the cloud login ended; asking the counter for a fresh one")
+            signInThroughCounter()
+        } else {
+            forget()
+        }
     }
 
     fun choose(id: String) {

@@ -93,7 +93,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
     Box(
         modifier.pressScale(interaction).alpha(if (on) 1f else 0.55f).clip(shape)
             .background(Brush.horizontalGradient(listOf(c.accent, c.accent2)))
-            .clickable(interactionSource = interaction, indication = ripple(), enabled = on, onClick = onClick)
+            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = on, onClick = onClick)
             .defaultMinSize(minHeight = 52.dp)
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center,
@@ -117,7 +117,7 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
     Box(
         modifier.pressScale(interaction).alpha(if (enabled) 1f else 0.55f).clip(RoundedCornerShape(Radius.lg))
             .background(c.raisedHigh)
-            .clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
+            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
             .defaultMinSize(minHeight = 52.dp)
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center,
@@ -134,7 +134,7 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 fun QuietButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, tone: Tone = Tone.Quiet) {
     val color = if (tone == Tone.Quiet) Mb.colors.accent else tone.color()
     Box(
-        modifier.clip(RoundedCornerShape(Radius.lg)).clickable(enabled = enabled, onClick = onClick).defaultMinSize(minHeight = Target.small).padding(horizontal = 12.dp),
+        modifier.clip(RoundedCornerShape(Radius.lg)).launchPoint().clickable(enabled = enabled, onClick = onClick).defaultMinSize(minHeight = Target.small).padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, style = Mb.type.button, color = color) }
 }
@@ -145,7 +145,7 @@ fun DangerButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifie
     Box(
         modifier.pressScale(interaction).alpha(if (enabled) 1f else 0.55f).clip(RoundedCornerShape(Radius.lg))
             .background(Mb.colors.dangerSoft)
-            .clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
+            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
             .defaultMinSize(minHeight = 52.dp)
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center,

@@ -2,6 +2,8 @@ package com.magicbill.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,7 +20,6 @@ import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.RestaurantMenu
 import androidx.compose.material.icons.outlined.SpaceDashboard
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -32,8 +33,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalGraphicsContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -69,6 +85,7 @@ import com.magicbill.app.nav.StaffEdit
 import com.magicbill.app.nav.Tables
 import com.magicbill.app.nav.Welcome
 import com.magicbill.app.ui.kit.Glow
+import com.magicbill.app.ui.kit.LocalPageMoving
 import com.magicbill.app.ui.kit.LocalReporter
 import com.magicbill.app.ui.kit.PillNavBar
 import com.magicbill.app.ui.kit.PillNavItem
@@ -171,38 +188,14 @@ fun Shell(vm: RootViewModel) {
 
     CompositionLocalProvider(LocalReporter provides reporter) {
         Box(Modifier.fillMaxSize()) {
-            Scaffold(
-                // Transparent, so the glow behind the whole app shows through.
-                containerColor = Color.Transparent,
-                // The bar floats over the screens and slips away when a screen without one
-                // opens; the tab screens keep its room themselves (see `screen`), so nothing
-                // beneath re-lays out while the next screen slides in.
-                bottomBar = {
-                    AnimatedVisibility(showBar, enter = MBMotion.barEnter, exit = MBMotion.barExit) {
-                        val selectedIndex = tabs.indexOfFirst { t -> backStack?.destination?.hasRoute(t.route()::class) == true }.coerceAtLeast(0)
-                        PillNavBar(
-                            items = tabs.map { it.item(unread > 0 || updateWaiting) },
-                            selectedIndex = selectedIndex,
-                            onSelect = { i ->
-                                nav.navigate(tabs[i].route()) {
-                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                        )
-                    }
-                },
-            ) { padding ->
-                // The bar's height, remembered while it is up, so a tab screen keeps its room
-                // even as the bar animates away.
-                var barHeight by remember { mutableStateOf(0.dp) }
-                val measured = padding.calculateBottomPadding()
-                if (showBar && measured > 0.dp) barHeight = measured
-                CompositionLocalProvider(LocalBarHeight provides barHeight) {
+            // The bar's height, kept once measured, so a tab screen leaves it room even while
+            // the bar animates away: nothing beneath re-lays out while a page opens.
+            var barHeight by remember { mutableStateOf(0.dp) }
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalBarHeight provides barHeight) {
                 Box(Modifier.fillMaxSize()) {
-                    // Tab hops drift-and-fade; drilling into a screen slides from the right, and
-                    // coming back reverses.
+                    // Tab hops drift-and-fade; a page grows out of what was tapped and shrinks
+                    // back into it.
                     fun androidx.navigation.NavDestination?.isTab() = this != null && Tab.entries.any { hasRoute(it.route()::class) }
                     // Decided ONCE. A start destination that follows the session would rebuild the
                     // graph the moment a pairing lands and cancel the screen still finishing it.
@@ -210,10 +203,10 @@ fun Shell(vm: RootViewModel) {
                     NavHost(
                         nav,
                         startDestination = start,
-                        enterTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) MBMotion.tabEnter else MBMotion.enterForward(this) },
-                        exitTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) MBMotion.tabExit else MBMotion.exitForward(this) },
-                        popEnterTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) MBMotion.tabEnter else MBMotion.enterBack(this) },
-                        popExitTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) MBMotion.tabExit else MBMotion.exitBack(this) },
+                        enterTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) { MBMotion.tabHop(initialState.id, targetState.id); MBMotion.tabEnter } else MBMotion.enterForward(this) },
+                        exitTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) { MBMotion.tabHop(initialState.id, targetState.id); MBMotion.tabExit } else MBMotion.exitForward(this) },
+                        popEnterTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) { MBMotion.tabHop(initialState.id, targetState.id); MBMotion.tabEnter } else MBMotion.enterBack(this) },
+                        popExitTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) { MBMotion.tabHop(initialState.id, targetState.id); MBMotion.tabExit } else MBMotion.exitBack(this) },
                     ) {
                         // The two doors. An owner signs in; a staff phone scans the counter's code.
                         screen<Welcome> { WelcomeScreen(onOwner = { nav.navigate(OwnerSignIn) }, onStaff = { nav.navigate(PairCounter) }) }
@@ -259,7 +252,22 @@ fun Shell(vm: RootViewModel) {
                         screen<Me> { MeScreen(back = { nav.popBackStack() }, onPair = { nav.navigate(PairCounter) }, left = { nav.navigate(More) { popUpTo(0) { inclusive = true } } }) }
                     }
                 }
-                }
+            }
+            // The bar floats over the screens and slips away when a screen without one opens.
+            AnimatedVisibility(showBar, Modifier.align(Alignment.BottomCenter), enter = MBMotion.barEnter, exit = MBMotion.barExit) {
+                val selectedIndex = tabs.indexOfFirst { t -> backStack?.destination?.hasRoute(t.route()::class) == true }.coerceAtLeast(0)
+                PillNavBar(
+                    items = tabs.map { it.item(unread > 0 || updateWaiting) },
+                    selectedIndex = selectedIndex,
+                    onSelect = { i ->
+                        nav.navigate(tabs[i].route()) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    modifier = Modifier.onSizeChanged { barHeight = with(density) { it.height.toDp() } },
+                )
             }
             // The counter's sentence, over everything, under the status bar — never over a button.
             ToastHost(reporter, Modifier.align(Alignment.TopCenter))
@@ -277,15 +285,113 @@ private val LocalBarHeight = compositionLocalOf { 0.dp }
  * drawn per screen, so a screen sliding in over another is never seen through. A tab screen
  * leaves the bar's room at the bottom; the bar's inset is taken there, so a keyboard below
  * is not counted twice.
+ *
+ * How a page moves is decided by its part in the move (see [MBMotion.Role]): a page opening or
+ * closing is drawn in a window that grows out of, or shrinks into, what was tapped; a page
+ * beneath, or coming back from beneath, is a picture of itself, zoomed and softened, and is
+ * not composed until it has landed. Every side of a move runs on the one pace.
  */
 private inline fun <reified T : Any> NavGraphBuilder.screen(noinline content: @Composable () -> Unit) =
-    composable<T> {
+    composable<T> { entry ->
         val isTab = Tab.entries.any { it.route()::class == T::class }
-        Glow(Modifier.fillMaxSize()) {
-            if (isTab) {
-                val room = PaddingValues(bottom = LocalBarHeight.current)
-                Box(Modifier.fillMaxSize().padding(room).consumeWindowInsets(room)) { content() }
-            } else content()
+        LaunchedEffect(entry) { MBMotion.watch(entry) }
+        // Moving from the first composition of the move (the transition's running flag is
+        // still off then); going = on the way out, whether beneath another page or closed.
+        val moving = transition.currentState != transition.targetState
+        val going = moving && transition.targetState == EnterExitState.PostExit
+        // One value for the whole move: 0 when the page is not in front, 1 when it is.
+        val p by transition.animateFloat(transitionSpec = { MBMotion.pace() }, label = "move") { if (it == EnterExitState.Visible) 1f else 0f }
+        LaunchedEffect(moving) { if (!moving) MBMotion.landed(entry.id) }
+        val role = if (moving) MBMotion.role(entry.id) else null
+        val look = MBMotion.look(entry.id)
+        // Coming back from beneath with a picture: the picture comes forward, and the page is
+        // composed once it has landed.
+        if ((role == MBMotion.Role.Return || role == MBMotion.Role.Tab) && !going && look != null) {
+            Box(Modifier.fillMaxSize().drawBehind { with(MBMotion) { drawBeneath(look, if (role == MBMotion.Role.Return) 1f - p else 0f) } })
+            return@composable
+        }
+        // The page draws through a layer of its own, so a picture can be taken of it.
+        val graphics = LocalGraphicsContext.current
+        val density = LocalDensity.current
+        val direction = LocalLayoutDirection.current
+        val page = remember(graphics) { graphics.createGraphicsLayer() }
+        DisposableEffect(page) { onDispose { graphics.releaseGraphicsLayer(page) } }
+        // Still and in front: the next press takes this page's picture (see [MBMotion.tapped]).
+        LaunchedEffect(moving) { if (!moving) MBMotion.inFront(entry.id) { MBMotion.take(page, graphics, density, direction) } }
+        // Going beneath: a picture now — for the blur, and for the card that grows out of it —
+        // the one taken at the press if there was one, and one again near the end of the
+        // move, when the press that opened the page has faded.
+        val underneath = going && (role == MBMotion.Role.Beneath || role == MBMotion.Role.Tab)
+        LaunchedEffect(underneath) {
+            if (!underneath) return@LaunchedEffect
+            MBMotion.keep(entry.id, MBMotion.staged(entry.id) ?: MBMotion.take(page, graphics, density, direction) ?: return@LaunchedEffect)
+            delay((transition.totalDurationNanos / 1_000_000 - MBMotion.SnapLead).coerceAtLeast(0))
+            MBMotion.take(page, graphics, density, direction)?.let { MBMotion.keep(entry.id, it) }
+        }
+        val windowed = role == MBMotion.Role.Open || role == MBMotion.Role.Close
+        val origin = if (windowed) MBMotion.origin(entry.id) else null
+        val under = if (windowed) MBMotion.look(MBMotion.beneath(entry.id)) else null
+        // Beneath, or coming back, on a phone that paints no pictures: the live page, zoomed and dimmed.
+        val liveBehind = moving && !windowed && role != MBMotion.Role.Tab && look == null
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer {
+                    if (windowed) {
+                        val f = MBMotion.frame(origin, size, p, this)
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = f.scale; scaleY = f.scale
+                        translationX = f.left; translationY = f.top
+                        clip = true; shape = MBMotion.Window(f.height, f.radius)
+                    } else {
+                        val z = if (liveBehind) MBMotion.zoomBehind(1f - p) else 1f
+                        transformOrigin = TransformOrigin.Center
+                        scaleX = z; scaleY = z
+                        translationX = 0f; translationY = 0f
+                        clip = false; shape = RectangleShape
+                    }
+                }
+                .drawBehind {
+                    // The card the page grows out of and shrinks back into: its piece of the
+                    // picture beneath, under the page inside the window, the window's width.
+                    if (windowed && under != null && origin != null) {
+                        val a = MBMotion.cardAlpha(p)
+                        val b = origin.bounds
+                        if (a > 0f) drawImage(
+                            under.sharp,
+                            srcOffset = IntOffset(b.left.roundToInt(), b.top.roundToInt()),
+                            srcSize = IntSize(b.width.roundToInt(), b.height.roundToInt()),
+                            dstSize = IntSize(size.width.roundToInt(), (size.width * b.height / b.width).roundToInt()),
+                            alpha = a,
+                        )
+                    }
+                },
+        ) {
+            Glow(
+                Modifier.fillMaxSize()
+                    .graphicsLayer {
+                        // In the window the page crossfades with the card, and is drawn once
+                        // into its own layer: the layer is what scales, not the text.
+                        alpha = if (windowed) MBMotion.pageAlpha(p) else 1f
+                        compositingStrategy = if (windowed) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+                    }
+                    .drawWithContent {
+                        page.record { this@drawWithContent.drawContent() }
+                        if (role == MBMotion.Role.Beneath && look != null) {
+                            with(MBMotion) { drawBeneath(look, 1f - p) }
+                        } else {
+                            drawLayer(page)
+                            if (liveBehind) drawRect(Color.Black, alpha = MBMotion.dimBehind(1f - p))
+                        }
+                    },
+            ) {
+                // What arrives while the page moves waits until it has landed (see [held]).
+                CompositionLocalProvider(LocalPageMoving provides moving) {
+                    if (isTab) {
+                        val room = PaddingValues(bottom = LocalBarHeight.current)
+                        Box(Modifier.fillMaxSize().padding(room).consumeWindowInsets(room)) { content() }
+                    } else content()
+                }
+            }
         }
     }
 

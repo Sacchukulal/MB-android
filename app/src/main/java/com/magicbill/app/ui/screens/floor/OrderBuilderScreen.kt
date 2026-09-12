@@ -20,13 +20,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -42,12 +47,18 @@ import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.FloorItemRow
 import com.magicbill.app.nav.NewOrder
 import com.magicbill.app.ui.kit.AnimatedRupees
+import com.magicbill.app.ui.kit.Arrives
+import com.magicbill.app.ui.kit.held
 import com.magicbill.app.ui.kit.ChipRow
 import com.magicbill.app.ui.kit.Empty
+import com.magicbill.app.ui.kit.Field
+import com.magicbill.app.ui.kit.IconDisc
+import com.magicbill.app.ui.kit.ListRow
 import com.magicbill.app.ui.kit.PageHeader
 import com.magicbill.app.ui.kit.PrimaryButton
 import com.magicbill.app.ui.kit.RoundAction
 import com.magicbill.app.ui.kit.SearchField
+import com.magicbill.app.ui.kit.Sheet
 import com.magicbill.app.ui.kit.Ticker
 import com.magicbill.app.ui.kit.VGap
 import com.magicbill.app.ui.theme.Gap
@@ -64,10 +75,10 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * The order builder: the whole menu with + and − on each dish, the running count and total at
- * the bottom, and ONE "Send to kitchen" press. The press does not wait: the order is staged in
- * one write, this screen is gone, and the tile on the floor shows it on its way — the counter's
- * answer lands on the tile and the toast a moment later.
+ * The order builder: the whole menu with + and − on each dish, the note for the kitchen, the
+ * running count and total at the bottom, and ONE "Send to kitchen" press. The press does not
+ * wait: the order is staged in one write, this screen is gone, and the tile on the floor
+ * shows it on its way — the counter's answer lands on the tile and the toast a moment later.
  */
 @HiltViewModel
 class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private val floor: Floor, val stream: Stream) : ViewModel() {
@@ -77,19 +88,23 @@ class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private
     private val category = MutableStateFlow("All")
     /** itemId → qty in thousandths. The cart lives HERE until Send. */
     private val cart = MutableStateFlow<Map<String, Long>>(emptyMap())
+    /** The order's one note for the kitchen — what the ticket prints under its head. */
+    private val noteFlow = MutableStateFlow("")
     private val sentenceFlow = MutableStateFlow<String?>(null)
 
     val search: StateFlow<String> get() = query
     val picked: StateFlow<String> get() = category
+    val note: StateFlow<String> get() = noteFlow
     val sentence: StateFlow<String?> get() = sentenceFlow
 
     data class MenuRow(val item: FloorItemRow, val qtyThousandths: Long)
 
-    val rows: StateFlow<List<MenuRow>> = combine(floor.items, query, category) { items, q, c ->
+    /** Null until the database has answered, so an empty menu is never claimed first. */
+    val rows: StateFlow<List<MenuRow>?> = combine(floor.items, query, category) { items, q, c ->
         items.filter { (c == "All" || it.category == c) && (q.isBlank() || it.name.contains(q, true)) }
     }.combine(cart) { items, inCart ->
         items.map { MenuRow(it, inCart[it.id] ?: 0L) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val categories: StateFlow<List<String>> = floor.items.combine(cart) { items, _ ->
         listOf("All") + items.map { it.category }.filter { it.isNotBlank() }.distinct()
@@ -106,8 +121,14 @@ class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Tally(0, 0))
 
+    init {
+        // Adding to an open order: its note is already there to read and change.
+        route.orderId?.let { id -> viewModelScope.launch { noteFlow.value = floor.order(id).first()?.note.orEmpty() } }
+    }
+
     fun setSearch(q: String) { query.value = q }
     fun pick(c: String) { category.value = c }
+    fun setNote(text: String) { noteFlow.value = text }
 
     fun plus(id: String) = bump(id, +1000)
     fun minus(id: String) = bump(id, -1000)
@@ -127,7 +148,7 @@ class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private
             }
             val place = Floor.Place(route.tableId, route.tableLabel, route.orderType)
             val estimate = Money.plain(tally.value.estimatePaise)
-            when (val a = floor.stageOrder(route.orderId, place, lines, null, estimate)) {
+            when (val a = floor.stageOrder(route.orderId, place, lines, noteFlow.value.trim().ifBlank { null }, estimate)) {
                 is Answer.Ok -> done()
                 else -> sentenceFlow.value = a.sentenceOrNull
             }
@@ -144,8 +165,10 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
     val picked by vm.picked.collectAsStateWithLifecycle()
     val search by vm.search.collectAsStateWithLifecycle()
     val tally by vm.tally.collectAsStateWithLifecycle()
+    val note by vm.note.collectAsStateWithLifecycle()
     val sentence by vm.sentence.collectAsStateWithLifecycle()
     val stream by vm.stream.state.collectAsStateWithLifecycle()
+    var noting by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.opened() }
 
     val title = vm.route.tableLabel?.let { "Table $it" }
@@ -156,19 +179,28 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
         Column(Modifier.padding(horizontal = Gap.page)) {
             SearchField(search, vm::setSearch, "Search menu…")
             VGap(Gap.field)
-            ChipRow(categories, picked) { vm.pick(it) }
+            ChipRow(held(categories), picked) { vm.pick(it) }
             VGap(Gap.field)
         }
-        if (rows.isEmpty()) {
+        val menu = held(rows)
+        if (menu != null && menu.isEmpty()) {
             Empty(if (search.isBlank()) "The menu has not come from the counter yet." else "No dish by that name.")
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = Gap.page, end = Gap.page, bottom = Space.s5)) {
-            items(rows, key = { it.item.id }) { row ->
-                DishRow(row, onPlus = { vm.plus(row.item.id) }, onMinus = { vm.minus(row.item.id) })
+        Arrives(Modifier.weight(1f).fillMaxWidth(), ready = menu != null) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = Gap.page, end = Gap.page, bottom = Space.s5)) {
+                items(menu.orEmpty(), key = { it.item.id }) { row ->
+                    DishRow(row, Modifier.animateItem(), onPlus = { vm.plus(row.item.id) }, onMinus = { vm.minus(row.item.id) })
+                }
             }
         }
-        // The bottom bar: the count, the estimate, and the one press.
+        // The bottom bar: the note, the count, the estimate, and the one press.
         Column(Modifier.fillMaxWidth().background(Mb.colors.surface).padding(horizontal = Gap.page, vertical = Space.s3).navigationBarsPadding()) {
+            ListRow(
+                title = note.ifBlank { "Note for the kitchen" },
+                subtitle = if (note.isBlank()) "Less spicy, serve together…" else "Note for the kitchen",
+                leading = { IconDisc(Icons.Outlined.EditNote) },
+                onClick = { noting = true },
+            )
             if (sentence != null) {
                 Text(sentence!!, style = Mb.type.caption, color = Mb.colors.danger)
                 VGap(Space.s2)
@@ -182,15 +214,24 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
             }
         }
     }
+
+    if (noting) {
+        Sheet("Note for the kitchen", onDismiss = { noting = false }) {
+            var draft by remember { mutableStateOf(note) }
+            Field(draft, { draft = it }, "Note", placeholder = "Less spicy, serve together…", ime = ImeAction.Done, onDone = { vm.setNote(draft); noting = false })
+            VGap(Gap.group)
+            PrimaryButton("Keep the note", { vm.setNote(draft); noting = false }, Modifier.fillMaxWidth())
+        }
+    }
 }
 
 /** One dish: name and price left; − qty + on the right. Tap the row itself to add one. */
 @Composable
-private fun DishRow(row: OrderBuilderViewModel.MenuRow, onPlus: () -> Unit, onMinus: () -> Unit) {
+private fun DishRow(row: OrderBuilderViewModel.MenuRow, modifier: Modifier = Modifier, onPlus: () -> Unit, onMinus: () -> Unit) {
     val qty = row.qtyThousandths
     val c = Mb.colors
     Row(
-        Modifier.fillMaxWidth().clickable(enabled = row.item.isAvailable, onClick = onPlus).padding(vertical = 10.dp),
+        modifier.fillMaxWidth().clickable(enabled = row.item.isAvailable, onClick = onPlus).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

@@ -102,6 +102,47 @@ class FloorTest {
         assertEquals("94.50", open.single().total)
     }
 
+    /** The order's one note rides in the batch, set before the ticket goes, and only when it changed. */
+    @Test fun the_note_for_the_kitchen_goes_before_the_ticket_and_only_when_it_changed() = runTest {
+        server.fail("/v1/batch")
+        floor.stageOrder(null, Floor.Place("t1", "1", "dine_in"), listOf(Floor.StagedLine("i1", "Idli", "2", null)), "  less spicy ", "40.00")
+        val fresh = db.intents().queued().map { it.what }
+        assertEquals("open + add + note + send", 4, fresh.size)
+        assertTrue(fresh[2].contains("\"do\":\"set_order_note\"") && fresh[2].contains("\"note\":\"less spicy\""))
+        assertTrue(fresh[3].contains("send_to_kitchen"))
+        assertEquals("less spicy", db.floor().openOrders().first().single().note)
+        db.intents().queued().forEach { db.intents().put(it.copy(state = "ok")) }
+
+        // Adding to an open order whose note is unchanged sends no note.
+        db.floor().putOrder(row("ord_9", "t2", "2", "120.00", "9").copy(note = "less spicy"))
+        floor.stageOrder("ord_9", Floor.Place("t2", "2", "dine_in"), listOf(Floor.StagedLine("i2", "Tea", "1", null)), "less spicy", "10.00")
+        val same = db.intents().queued().map { it.what }
+        assertEquals("add + send", 2, same.size)
+        assertTrue(same.none { it.contains("set_order_note") })
+        db.intents().queued().forEach { db.intents().put(it.copy(state = "ok")) }
+
+        // Clearing it counts as a change: the counter is told the note is gone.
+        floor.stageOrder("ord_9", Floor.Place("t2", "2", "dine_in"), listOf(Floor.StagedLine("i2", "Tea", "1", null)), "", "10.00")
+        val cleared = db.intents().queued().map { it.what }
+        assertEquals("add + note + send", 3, cleared.size)
+        assertTrue(cleared[1].contains("\"do\":\"set_order_note\"") && cleared[1].contains("\"note\":null"))
+        assertNull(db.floor().order("ord_9")?.note)
+    }
+
+    /** A 401 from the counter is shown, never acted on: the credential stays, and the next 200 clears the notice. */
+    @Test fun a_revoke_notice_clears_when_the_counter_knows_the_phone_again() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val counter = Counter(CounterLink(clientFactory = { server.client() }, clock = Clock { now }), box, Discovery(context), Clock { now })
+        counter.load()
+        server.once("GET", "/v1/me", FakeServer.Reply(401, """{"message":"This phone was removed at the counter."}"""))
+        assertTrue(counter.refreshMe() is Answer.SignedOut)
+        assertEquals("This phone was removed at the counter.", counter.revokedSays.value)
+        assertTrue("the credential is kept", counter.isPaired)
+        server.once("GET", "/v1/me", FakeServer.Reply(200, """{"device_id":"dev_1","name":"Phone","staff_id":"stf_1","may":["order.create"]}"""))
+        assertTrue(counter.refreshMe() is Answer.Ok)
+        assertNull(counter.revokedSays.value)
+    }
+
     @Test fun a_refusal_that_says_the_bill_is_paid_closes_the_order_on_the_phone() = runTest {
         db.floor().putOrder(row("ord_9", "t2", "2", "120.00", "9"))
         server.once("POST", "/v1/intent", FakeServer.Reply(409, """{"outcome":"refused","message":"That bill has already been paid at the counter. Start a new order for anything else."}"""))
