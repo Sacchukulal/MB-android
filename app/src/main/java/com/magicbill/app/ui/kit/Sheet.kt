@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,7 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-/** A sheet from the bottom: a choice, a reason, a confirmation. */
+/** A sheet from the bottom: a choice, a reason, a confirmation. It rides up over the keyboard. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Sheet(title: String?, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
@@ -54,7 +55,7 @@ fun Sheet(title: String?, onDismiss: () -> Unit, content: @Composable ColumnScop
         contentColor = Mb.colors.ink,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = Gap.page, vertical = Space.s4).windowInsetsPadding(WindowInsets.navigationBars)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = Gap.page, vertical = Space.s4).windowInsetsPadding(WindowInsets.navigationBars).imePadding()) {
             if (title != null) {
                 Text(title, style = Mb.type.section, color = Mb.colors.ink)
                 VGap(Gap.field)

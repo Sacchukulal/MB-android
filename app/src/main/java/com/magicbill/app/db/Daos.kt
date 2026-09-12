@@ -191,6 +191,7 @@ interface FloorDao {
     @Query("SELECT * FROM floor_orders WHERE orderId = :id") suspend fun order(id: String): FloorOrderRow?
     @Query("SELECT * FROM floor_orders WHERE orderId = :id") fun orderFlow(id: String): Flow<FloorOrderRow?>
     @Query("SELECT * FROM floor_orders WHERE closedSays IS NULL ORDER BY updatedMs DESC") fun openOrders(): Flow<List<FloorOrderRow>>
+    @Query("SELECT * FROM floor_orders WHERE closedSays IS NULL") suspend fun openOrdersNow(): List<FloorOrderRow>
     @Query("SELECT * FROM floor_orders WHERE tableId = :tableId AND closedSays IS NULL LIMIT 1") suspend fun openOnTable(tableId: String): FloorOrderRow?
     @Query("DELETE FROM floor_orders WHERE closedSays IS NOT NULL AND updatedMs < :olderThanMs") suspend fun pruneClosed(olderThanMs: Long)
     @Query("DELETE FROM floor_orders") suspend fun clearOrders()

@@ -1,5 +1,6 @@
 package com.magicbill.app.counter
 
+import androidx.room.withTransaction
 import com.magicbill.app.core.Answer
 import com.magicbill.app.core.Clock
 import com.magicbill.app.core.MbJson
@@ -26,7 +27,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -71,6 +71,8 @@ class Floor @Inject constructor(
     val sentences: SharedFlow<String> get() = said
 
     private val sending = Mutex()
+    /** The floor is written by one hand at a time: a push and a pull-to-refresh never interleave. */
+    private val applying = Mutex()
 
     /** `GET /v1/catalogue?version=…`; 304 keeps what we have. */
     suspend fun refreshCatalogue(force: Boolean = false): Answer<Boolean> {
@@ -271,56 +273,59 @@ class Floor @Inject constructor(
      * waiter's. What is here is the floor; an order this phone holds that is not here is one
      * the counter has finished with. A staged order still on its way is left alone.
      */
-    suspend fun takeFloor(body: JsonObject) {
+    suspend fun takeFloor(body: JsonObject) = applying.withLock {
         val now = clock.now()
         body.intOrNull("warn_minutes")?.let { w -> body.intOrNull("late_minutes")?.let { l -> thresholdsFlow.value = w to l } }
         val myStaff = counter.me.value?.staffId
-        for (t in body.arr("tables").objects()) {
-            val id = t.str("id")
-            if (id.isNotEmpty()) db.floor().setTableState(id, t.str("state"))
-        }
-        val open = body.arr("orders").objects().associateBy { it.str("order_id") }
-        val known = db.floor().openOrders().first().associateBy { it.orderId }
-        // Gone from the floor: finished with.
-        for (row in known.values) {
-            if (row.orderId.startsWith(PENDING_PREFIX)) continue
-            if (open[row.orderId] == null) {
-                db.floor().putOrder(row.copy(closedSays = "The counter has finished with this order.", sending = false, updatedMs = now))
+        // ONE transaction: the screens see the whole floor change at once, never half of it.
+        db.withTransaction {
+            for (t in body.arr("tables").objects()) {
+                val id = t.str("id")
+                if (id.isNotEmpty()) db.floor().setTableState(id, t.str("state"))
             }
-        }
-        // On the floor: brought up to date, or adopted.
-        for ((id, o) in open) {
-            val row = known[id]
-            val byId = o.strOrNull("by_id")
-            db.floor().putOrder(
-                FloorOrderRow(
-                    orderId = id,
-                    tableId = o.strOrNull("table_id") ?: row?.tableId,
-                    tableLabel = o.strOrNull("table_label") ?: row?.tableLabel,
-                    orderType = o.strOrNull("order_type")?.takeIf { it.isNotBlank() } ?: row?.orderType ?: "",
-                    total = o.strOrNull("total") ?: row?.total ?: "0.00",
-                    token = o.strOrNull("token") ?: row?.token,
-                    lines = (o["lines"] as? JsonArray)?.toString() ?: row?.lines ?: "[]",
-                    // The push carries the order's real note (or none) — it REPLACES, so a
-                    // sentence that was wrongly stored as the note heals on the next push.
-                    note = o.strOrNull("note"),
-                    by = o.strOrNull("by") ?: row?.by,
-                    byId = byId ?: row?.byId,
-                    mine = (byId != null && byId == myStaff) || (row?.mine ?: false),
-                    billAsked = o.bool("bill_asked"),
-                    settleAsked = o.bool("settle_asked"),
-                    minutes = o.intOrNull("minutes") ?: row?.minutes,
-                    // A push while an addition is on its way keeps the tile quiet until the
-                    // batch answers; the answer clears it.
-                    sending = row?.sending ?: false,
-                    closedSays = null,
-                    updatedMs = now,
-                ),
-            )
+            val open = body.arr("orders").objects().associateBy { it.str("order_id") }
+            val known = db.floor().openOrdersNow().associateBy { it.orderId }
+            // Gone from the floor: finished with.
+            for (row in known.values) {
+                if (row.orderId.startsWith(PENDING_PREFIX)) continue
+                if (open[row.orderId] == null) {
+                    db.floor().putOrder(row.copy(closedSays = "The counter has finished with this order.", sending = false, updatedMs = now))
+                }
+            }
+            // On the floor: brought up to date, or adopted.
+            for ((id, o) in open) {
+                val row = known[id]
+                val byId = o.strOrNull("by_id")
+                db.floor().putOrder(
+                    FloorOrderRow(
+                        orderId = id,
+                        tableId = o.strOrNull("table_id") ?: row?.tableId,
+                        tableLabel = o.strOrNull("table_label") ?: row?.tableLabel,
+                        orderType = o.strOrNull("order_type")?.takeIf { it.isNotBlank() } ?: row?.orderType ?: "",
+                        total = o.strOrNull("total") ?: row?.total ?: "0.00",
+                        token = o.strOrNull("token") ?: row?.token,
+                        lines = (o["lines"] as? JsonArray)?.toString() ?: row?.lines ?: "[]",
+                        // The push carries the order's real note (or none) — it REPLACES, so a
+                        // sentence that was wrongly stored as the note heals on the next push.
+                        note = o.strOrNull("note"),
+                        by = o.strOrNull("by") ?: row?.by,
+                        byId = byId ?: row?.byId,
+                        mine = (byId != null && byId == myStaff) || (row?.mine ?: false),
+                        billAsked = o.bool("bill_asked"),
+                        settleAsked = o.bool("settle_asked"),
+                        minutes = o.intOrNull("minutes") ?: row?.minutes,
+                        // A push while an addition is on its way keeps the tile quiet until the
+                        // batch answers; the answer clears it.
+                        sending = row?.sending ?: false,
+                        closedSays = null,
+                        updatedMs = now,
+                    ),
+                )
+            }
         }
     }
 
-    /** After `too_far_behind`: one decision, one snapshot. */
+    /** The line came up, or `too_far_behind`: one decision, one snapshot. */
     suspend fun catchUp() {
         refreshCatalogue(force = false)
         val c = counter.credential.value ?: return

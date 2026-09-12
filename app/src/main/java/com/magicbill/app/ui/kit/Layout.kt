@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -55,7 +56,8 @@ import com.magicbill.app.ui.theme.Space
  * gives the depth. No cards-in-cards, no dividers, no borders.
  */
 
-/** A screen. Large-title header (typography, not an app bar), content on the canvas. */
+/** A screen. Large-title header (typography, not an app bar), content on the canvas. The
+ *  keyboard takes its room from the bottom, so a field being typed in is never under it. */
 @Composable
 fun Page(
     title: String?,
@@ -66,7 +68,7 @@ fun Page(
     bottomPadding: androidx.compose.ui.unit.Dp = Space.s7,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding()) {
         if (title != null) {
             PageHeader(title, subtitle, back, actions)
         } else {

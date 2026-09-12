@@ -1,8 +1,11 @@
 package com.magicbill.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
@@ -20,6 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -28,12 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -61,6 +68,7 @@ import com.magicbill.app.nav.Staff
 import com.magicbill.app.nav.StaffEdit
 import com.magicbill.app.nav.Tables
 import com.magicbill.app.nav.Welcome
+import com.magicbill.app.ui.kit.Glow
 import com.magicbill.app.ui.kit.LocalReporter
 import com.magicbill.app.ui.kit.PillNavBar
 import com.magicbill.app.ui.kit.PillNavItem
@@ -166,8 +174,11 @@ fun Shell(vm: RootViewModel) {
             Scaffold(
                 // Transparent, so the glow behind the whole app shows through.
                 containerColor = Color.Transparent,
+                // The bar floats over the screens and slips away when a screen without one
+                // opens; the tab screens keep its room themselves (see `screen`), so nothing
+                // beneath re-lays out while the next screen slides in.
                 bottomBar = {
-                    if (showBar) {
+                    AnimatedVisibility(showBar, enter = MBMotion.barEnter, exit = MBMotion.barExit) {
                         val selectedIndex = tabs.indexOfFirst { t -> backStack?.destination?.hasRoute(t.route()::class) == true }.coerceAtLeast(0)
                         PillNavBar(
                             items = tabs.map { it.item(unread > 0 || updateWaiting) },
@@ -183,7 +194,13 @@ fun Shell(vm: RootViewModel) {
                     }
                 },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
+                // The bar's height, remembered while it is up, so a tab screen keeps its room
+                // even as the bar animates away.
+                var barHeight by remember { mutableStateOf(0.dp) }
+                val measured = padding.calculateBottomPadding()
+                if (showBar && measured > 0.dp) barHeight = measured
+                CompositionLocalProvider(LocalBarHeight provides barHeight) {
+                Box(Modifier.fillMaxSize()) {
                     // Tab hops drift-and-fade; drilling into a screen slides from the right, and
                     // coming back reverses.
                     fun androidx.navigation.NavDestination?.isTab() = this != null && Tab.entries.any { hasRoute(it.route()::class) }
@@ -199,48 +216,49 @@ fun Shell(vm: RootViewModel) {
                         popExitTransition = { if (initialState.destination.isTab() && targetState.destination.isTab()) MBMotion.tabExit else MBMotion.exitBack(this) },
                     ) {
                         // The two doors. An owner signs in; a staff phone scans the counter's code.
-                        composable<Welcome> { WelcomeScreen(onOwner = { nav.navigate(OwnerSignIn) }, onStaff = { nav.navigate(PairCounter) }) }
-                        composable<OwnerSignIn> { OwnerSignInScreen(back = { nav.popBackStack() }, signUp = { nav.navigate(OwnerSignUp) }, done = { nav.home(vm) }) }
-                        composable<OwnerSignUp> { OwnerSignUpScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
-                        composable<PairCounter> { PairScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
+                        screen<Welcome> { WelcomeScreen(onOwner = { nav.navigate(OwnerSignIn) }, onStaff = { nav.navigate(PairCounter) }) }
+                        screen<OwnerSignIn> { OwnerSignInScreen(back = { nav.popBackStack() }, signUp = { nav.navigate(OwnerSignUp) }, done = { nav.home(vm) }) }
+                        screen<OwnerSignUp> { OwnerSignUpScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
+                        screen<PairCounter> { PairScreen(back = { nav.popBackStack() }, done = { nav.home(vm) }) }
 
                         // The five tabs. A screen that needs the cloud says so when the phone has
                         // no cloud login; Orders says so when the phone is not on a counter.
                         // The door: a shop whose plan is not running shows why, and the way to
                         // magicbill.in, in place of its data.
-                        composable<Home> {
+                        screen<Home> {
                             if (!signedIn) NeedsCloudScreen(onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) })
                             else if (planDoor != null) PlanDoorScreen(planDoor!!, onCheckAgain = vm::checkPlan)
                             else { val unreadNow by vm.unread.collectAsStateWithLifecycle(); HomeScreen(onNotices = { nav.navigate(Notices) }, unread = unreadNow) }
                         }
-                        composable<Reports> {
+                        screen<Reports> {
                             if (!signedIn) NeedsCloudScreen(onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) })
                             else if (planDoor != null) PlanDoorScreen(planDoor!!, onCheckAgain = vm::checkPlan)
                             else ReportsScreen(openBill = { nav.navigate(BillDetail(it)) })
                         }
-                        composable<Tables> {
+                        screen<Tables> {
                             if (cred == null) ConnectScreen(onPair = { nav.navigate(PairCounter) })
-                            else TablesScreen(openOrder = { nav.navigate(OrderScreen(it)) }, openBuilder = { nav.navigate(it) }, onPair = { nav.navigate(PairCounter) })
+                            else TablesScreen(openOrder = { nav.navigate(it) }, openBuilder = { nav.navigate(it) }, onPair = { nav.navigate(PairCounter) })
                         }
-                        composable<AccountScreen> { AccountScreenView(vm, onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) }, onMe = { nav.navigate(Me) }, signedOut = { nav.navigate(Welcome) { popUpTo(0) { inclusive = true } } }) }
-                        composable<More> { MoreScreen(vm, nav) }
+                        screen<AccountScreen> { AccountScreenView(vm, onOwner = { nav.navigate(OwnerSignIn) }, onPair = { nav.navigate(PairCounter) }, onMe = { nav.navigate(Me) }, signedOut = { nav.navigate(Welcome) { popUpTo(0) { inclusive = true } } }) }
+                        screen<More> { MoreScreen(vm, nav) }
 
-                        composable<Bills> { BillsScreen(open = { nav.navigate(BillDetail(it)) }) }
-                        composable<BillDetail> { BillDetailScreen(back = { nav.popBackStack() }) }
-                        composable<Khata> { KhataScreen(open = { nav.navigate(CustomerDetail(it)) }) }
-                        composable<CustomerDetail> { CustomerScreen(back = { nav.popBackStack() }, openBill = { nav.navigate(BillDetail(it)) }) }
-                        composable<Expenses> { ExpensesScreen(back = { nav.popBackStack() }) }
-                        composable<Staff> { StaffScreen(back = { nav.popBackStack() }, openMember = { nav.navigate(StaffEdit(it)) }, openRole = { nav.navigate(RoleEdit(it)) }) }
-                        composable<StaffEdit> { StaffEditScreen(back = { nav.popBackStack() }) }
-                        composable<RoleEdit> { RoleEditScreen(back = { nav.popBackStack() }) }
-                        composable<Devices> { DevicesScreen(back = { nav.popBackStack() }) }
-                        composable<Notices> { NoticesScreen(back = { nav.popBackStack() }) }
+                        screen<Bills> { BillsScreen(open = { nav.navigate(BillDetail(it)) }) }
+                        screen<BillDetail> { BillDetailScreen(back = { nav.popBackStack() }) }
+                        screen<Khata> { KhataScreen(open = { nav.navigate(CustomerDetail(it)) }) }
+                        screen<CustomerDetail> { CustomerScreen(back = { nav.popBackStack() }, openBill = { nav.navigate(BillDetail(it)) }) }
+                        screen<Expenses> { ExpensesScreen(back = { nav.popBackStack() }) }
+                        screen<Staff> { StaffScreen(back = { nav.popBackStack() }, openMember = { nav.navigate(StaffEdit(it)) }, openRole = { nav.navigate(RoleEdit(it)) }) }
+                        screen<StaffEdit> { StaffEditScreen(back = { nav.popBackStack() }) }
+                        screen<RoleEdit> { RoleEditScreen(back = { nav.popBackStack() }) }
+                        screen<Devices> { DevicesScreen(back = { nav.popBackStack() }) }
+                        screen<Notices> { NoticesScreen(back = { nav.popBackStack() }) }
 
-                        composable<OrderScreen> { OrderScreenView(back = { nav.popBackStack() }, addMore = { nav.navigate(it) }) }
-                        composable<NewOrder> { OrderBuilderScreen(back = { nav.popBackStack() }, done = { nav.popBackStack() }) }
-                        composable<Queue> { QueueScreen() }
-                        composable<Me> { MeScreen(back = { nav.popBackStack() }, onPair = { nav.navigate(PairCounter) }, left = { nav.navigate(More) { popUpTo(0) { inclusive = true } } }) }
+                        screen<OrderScreen> { OrderScreenView(back = { nav.popBackStack() }, addMore = { nav.navigate(it) }) }
+                        screen<NewOrder> { OrderBuilderScreen(back = { nav.popBackStack() }, done = { nav.popBackStack() }) }
+                        screen<Queue> { QueueScreen() }
+                        screen<Me> { MeScreen(back = { nav.popBackStack() }, onPair = { nav.navigate(PairCounter) }, left = { nav.navigate(More) { popUpTo(0) { inclusive = true } } }) }
                     }
+                }
                 }
             }
             // The counter's sentence, over everything, under the status bar — never over a button.
@@ -250,6 +268,26 @@ fun Shell(vm: RootViewModel) {
         }
     }
 }
+
+/** The floating bar's height, for the screens that sit behind it. */
+private val LocalBarHeight = compositionLocalOf { 0.dp }
+
+/**
+ * One destination of the graph, on its own opaque canvas: the glow and the background are
+ * drawn per screen, so a screen sliding in over another is never seen through. A tab screen
+ * leaves the bar's room at the bottom; the bar's inset is taken there, so a keyboard below
+ * is not counted twice.
+ */
+private inline fun <reified T : Any> NavGraphBuilder.screen(noinline content: @Composable () -> Unit) =
+    composable<T> {
+        val isTab = Tab.entries.any { it.route()::class == T::class }
+        Glow(Modifier.fillMaxSize()) {
+            if (isTab) {
+                val room = PaddingValues(bottom = LocalBarHeight.current)
+                Box(Modifier.fillMaxSize().padding(room).consumeWindowInsets(room)) { content() }
+            } else content()
+        }
+    }
 
 /** After a sign-in or a pairing: the first tab this person has, with nothing to go back to. */
 private fun androidx.navigation.NavHostController.home(vm: RootViewModel) {

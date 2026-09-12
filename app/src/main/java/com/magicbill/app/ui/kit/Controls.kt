@@ -6,17 +6,22 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -202,7 +209,10 @@ fun SwitchRow(title: String, subtitle: String? = null, checked: Boolean, enabled
     })
 }
 
-/** Filled, borderless field: quiet label above, raised slab, accent ring on focus. */
+/**
+ * Filled, borderless field: quiet label above, raised slab, accent ring on focus. A field being
+ * typed in follows the keyboard: as the keyboard rises the field is scrolled back into view.
+ */
 @Composable
 fun Field(
     value: String,
@@ -224,12 +234,18 @@ fun Field(
     var shown by remember { mutableStateOf(false) }
     val c = Mb.colors
     val labelColor by animateColorAsState(if (error != null) c.danger else c.inkMuted, label = "fieldLabel")
-    Column(modifier.fillMaxWidth()) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val requester = remember { BringIntoViewRequester() }
+    val keyboardHeight = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(focused, keyboardHeight) { if (focused && keyboardHeight > 0) requester.bringIntoView() }
+    Column(modifier.fillMaxWidth().bringIntoViewRequester(requester)) {
         Text(label, style = Mb.type.label, color = labelColor, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
+            interactionSource = interaction,
             enabled = enabled,
             textStyle = textStyle ?: Mb.type.body,
             placeholder = placeholder?.let { { Text(it, style = textStyle ?: Mb.type.body, color = c.inkFaint) } },

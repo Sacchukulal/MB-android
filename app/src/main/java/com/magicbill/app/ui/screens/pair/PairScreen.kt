@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -163,7 +162,7 @@ fun PairScreen(back: () -> Unit, done: () -> Unit, vm: PairViewModel = hiltViewM
     LaunchedEffect(step) { if (step is PairViewModel.Step.Done) done() }
 
     Page("Scan the code", "It is on the counter: Settings › Phones", back = back) {
-        Column(Modifier.imePadding()) {
+        Column {
             VGap(Gap.field)
             when (val s = step) {
                 is PairViewModel.Step.Busy -> {

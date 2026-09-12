@@ -1,6 +1,5 @@
 package com.magicbill.app.ui.screens.floor
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,7 +35,6 @@ import com.magicbill.app.counter.LineView
 import com.magicbill.app.counter.Ops
 import com.magicbill.app.counter.Outcome
 import com.magicbill.app.counter.Stream
-import com.magicbill.app.db.FloorItemRow
 import com.magicbill.app.db.FloorOrderRow
 import com.magicbill.app.db.FloorTableRow
 import com.magicbill.app.nav.OrderScreen
@@ -63,7 +61,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -76,27 +74,33 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class OrderViewModel @Inject constructor(saved: SavedStateHandle, private val floor: Floor, val stream: Stream, private val counter: Counter) : ViewModel() {
-    val orderId: String = saved.toRoute<OrderScreen>().orderId
+    private val route = saved.toRoute<OrderScreen>()
+    val orderId: String get() = route.orderId
+    val title: String get() = route.title
 
-    data class View(val order: FloorOrderRow? = null, val lines: List<LineView> = emptyList(), val items: List<FloorItemRow> = emptyList(), val tables: List<FloorTableRow> = emptyList())
+    data class View(val order: FloorOrderRow?, val lines: List<LineView>)
 
-    val view: StateFlow<View> = combine(floor.order(orderId), floor.items, floor.tables) { o, items, tables ->
-        View(o, o?.let { Floor.parseLines(it.lines) } ?: emptyList(), items, tables)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), View())
+    /** Null until the database has answered, so the screen never claims the order is missing first. */
+    val view: StateFlow<View?> = floor.order(orderId).map { o -> View(o, o?.let { Floor.parseLines(it.lines) } ?: emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Only the move-table sheet reads these; the page does not wait for them. */
+    val tables: StateFlow<List<FloorTableRow>> = floor.tables.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val busyFlow = MutableStateFlow(false)
     val busy: StateFlow<Boolean> get() = busyFlow
 
     val may: Set<String> get() = counter.me.value?.may ?: emptySet()
 
-    fun send(what: JsonObject, label: String, say: (String) -> Unit) {
+    /** [then] runs once the counter has taken it — the screen decides what a done job leads to. */
+    fun send(what: JsonObject, label: String, say: (String) -> Unit, then: (() -> Unit)? = null) {
         if (busyFlow.value) return
         busyFlow.value = true
         viewModelScope.launch {
-            val o = view.value.order
+            val o = view.value?.order
             when (val a = floor.submit(what, orderId, label, Floor.Place(o?.tableId, o?.tableLabel, o?.orderType ?: ""))) {
                 is Answer.Ok -> when (val out = a.value) {
-                    is Outcome.Ok -> if (!out.note.isNullOrBlank()) say(out.note)
+                    is Outcome.Ok -> { if (!out.note.isNullOrBlank()) say(out.note); then?.invoke() }
                     is Outcome.Refused -> say(out.message)
                     is Outcome.Held -> say(out.message)
                 }
@@ -112,11 +116,13 @@ class OrderViewModel @Inject constructor(saved: SavedStateHandle, private val fl
 
 @Composable
 fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) -> Unit, vm: OrderViewModel = hiltViewModel()) {
-    val view by vm.view.collectAsStateWithLifecycle()
+    val loaded by vm.view.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val stream by vm.stream.state.collectAsStateWithLifecycle()
     val reporter = LocalReporter.current
     LaunchedEffect(Unit) { vm.opened() }
+    // The header alone for the instant before the database answers.
+    val view = loaded ?: run { Page(vm.title, back = back) {}; return }
     var lineMenu by remember { mutableStateOf<LineView?>(null) }
     var more by remember { mutableStateOf(false) }
     var reasonFor by remember { mutableStateOf<String?>(null) } // "void:<line>" | "cancel"
@@ -125,17 +131,17 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     var settling by remember { mutableStateOf(false) }
     val o = view.order
     val closed = o?.closedSays
-    val title = o?.tableLabel?.let { "Table $it" } ?: o?.orderType?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Order"
+    val title = o?.let { orderTitle(it.tableLabel, it.orderType) } ?: vm.title
     val subtitle = listOfNotNull(o?.token?.let { "Token #$it" }, o?.by?.takeIf { o.mine != true }?.let { "$it's order" }).joinToString(" · ").ifBlank { null }
 
     Page(title, subtitle, back = back, scroll = false, bottomPadding = 0.dp, actions = {
         if (o?.settleAsked == true) Badge("Settle asked", Tone.Ok) else if (o?.billAsked == true) Badge("Bill printed", Tone.Ok)
-        StreamBadge(stream)
+        StreamBadge(stream, quietWhenLive = true)
         if (closed == null) IconAction(Icons.Outlined.MoreVert, "More", { more = true })
     }) {
         if (closed != null) { Notice(Tone.Info, closed, action = { SecondaryButton("Back", back) }); VGap(Gap.field) }
         if (o == null) { Empty("This order is not on the phone."); return@Page }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().animateContentSize()) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
             if (view.lines.isEmpty()) item { Empty("Nothing on this order yet. Add the first dish.") }
             items(view.lines, key = { it.line }) { l ->
                 ListRow(
@@ -175,7 +181,7 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                     SecondaryButton(if (o.billAsked) "Print bill again" else "Print bill", { vm.send(Ops.printBill(), "Print the bill", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending && view.lines.isNotEmpty())
                 }
                 // The waiter asks; somebody at the counter confirms with one key. The money is
-                // still taken at the counter.
+                // still taken at the counter. Asked, the waiter is done here: back to the floor.
                 SecondaryButton(
                     if (o.settleAsked) "Settle asked — ask again" else "Settle bill",
                     { settling = true },
@@ -206,9 +212,9 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             Text("How did they pay? The counter confirms it.", style = Mb.type.body, color = Mb.colors.inkMuted)
             VGap(Gap.field)
             for ((word, mode) in listOf("Cash" to "cash", "Card" to "card", "UPI" to "upi")) {
-                ListRow(word, onClick = { settling = false; vm.send(Ops.requestSettle(mode), "Settle the bill", reporter::say) })
+                ListRow(word, onClick = { settling = false; vm.send(Ops.requestSettle(mode), "Settle the bill", reporter::say, back) })
             }
-            ListRow("Not sure — the counter decides", onClick = { settling = false; vm.send(Ops.requestSettle(null), "Settle the bill", reporter::say) })
+            ListRow("Not sure — the counter decides", onClick = { settling = false; vm.send(Ops.requestSettle(null), "Settle the bill", reporter::say, back) })
             VGap(Gap.field)
         }
     }
@@ -240,7 +246,8 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
 
     if (moving) {
         Sheet("Move to which table?", onDismiss = { moving = false }) {
-            val free = view.tables.filter { it.state.isBlank() || it.state == "free" }
+            val tables by vm.tables.collectAsStateWithLifecycle()
+            val free = tables.filter { it.state.isBlank() || it.state == "free" }
             if (free.isEmpty()) Text("No free table right now.", style = Mb.type.body, color = Mb.colors.inkMuted)
             Column(Modifier.heightIn(max = 360.dp)) {
                 LazyColumn { items(free, key = { it.id }) { t -> ListRow("Table ${t.label}", t.section, onClick = { moving = false; vm.send(Ops.moveTable(t.id), "Move to table ${t.label}", reporter::say) }) } }
@@ -257,6 +264,10 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
         }
     }
 }
+
+/** "Table 9", or the order type when it sits on no table. */
+fun orderTitle(tableLabel: String?, orderType: String?): String =
+    tableLabel?.let { "Table $it" } ?: orderType?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Order"
 
 /** "2" → "3"; "0.5" → "1.5"; never below 0.5. */
 internal fun step(qty: String, by: Int): String {

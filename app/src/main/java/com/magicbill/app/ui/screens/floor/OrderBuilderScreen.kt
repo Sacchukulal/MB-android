@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -150,8 +151,8 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
     val title = vm.route.tableLabel?.let { "Table $it" }
         ?: vm.route.orderType.replace('_', ' ').replaceFirstChar { it.uppercase() }
 
-    Column(Modifier.fillMaxSize()) {
-        PageHeader(title, if (vm.route.orderId == null) "New order" else "Adding to the order", back = back, actions = { StreamBadge(stream) })
+    Column(Modifier.fillMaxSize().imePadding()) {
+        PageHeader(title, if (vm.route.orderId == null) "New order" else "Adding to the order", back = back, actions = { StreamBadge(stream, quietWhenLive = true) })
         Column(Modifier.padding(horizontal = Gap.page)) {
             SearchField(search, vm::setSearch, "Search menu…")
             VGap(Gap.field)

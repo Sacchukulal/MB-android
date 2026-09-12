@@ -57,6 +57,7 @@ import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.FloorOrderRow
 import com.magicbill.app.db.FloorTableRow
 import com.magicbill.app.nav.NewOrder
+import com.magicbill.app.nav.OrderScreen
 import com.magicbill.app.ui.kit.Badge
 import com.magicbill.app.ui.kit.Empty
 import com.magicbill.app.ui.kit.IconDisc
@@ -130,7 +131,7 @@ class TablesViewModel @Inject constructor(private val floor: Floor, val stream: 
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, onPair: () -> Unit, vm: TablesViewModel = hiltViewModel()) {
+fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Unit, onPair: () -> Unit, vm: TablesViewModel = hiltViewModel()) {
     val view by vm.view.collectAsStateWithLifecycle()
     val stream by vm.streamState.collectAsStateWithLifecycle()
     val revoked by vm.revoked.collectAsStateWithLifecycle()
@@ -175,7 +176,7 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
                     items(tables, key = { it.id }) { t ->
                         val order = view.onTable[t.id]
                         TableCard(t, order, now, thresholds) {
-                            if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(order.orderId)
+                            if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(OrderScreen(order.orderId, orderTitle(order.tableLabel, order.orderType)))
                             else if (order == null) openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
                         }
                     }
@@ -201,7 +202,7 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
                                         o.billAsked -> Badge("Bill", Tone.Ok)
                                     }
                                 },
-                                onClick = if (pending) null else ({ openOrder(o.orderId) }),
+                                onClick = if (pending) null else ({ openOrder(OrderScreen(o.orderId, orderTitle(o.tableLabel, o.orderType))) }),
                             )
                         }
                         ListRow(title = "New parcel order", leading = { IconDisc(Icons.Outlined.Add) }, onClick = { openBuilder(NewOrder(orderType = "parcel")) })
@@ -213,10 +214,11 @@ fun TablesScreen(openOrder: (String) -> Unit, openBuilder: (NewOrder) -> Unit, o
     }
 }
 
+/** [quietWhenLive]: a page whose title needs the room says nothing while all is well. */
 @Composable
-fun StreamBadge(state: Stream.State) {
+fun StreamBadge(state: Stream.State, quietWhenLive: Boolean = false) {
     when (state) {
-        Stream.State.Live -> Badge("Live", Tone.Ok)
+        Stream.State.Live -> if (!quietWhenLive) Badge("Live", Tone.Ok)
         Stream.State.Connecting -> Badge("Connecting", Tone.Info)
         Stream.State.Lost -> Badge("Reconnecting", Tone.Warn)
         Stream.State.Off -> {}

@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.navigation.NavBackStackEntry
 
 /** Shared motion vocabulary — every animated thing in the app draws from here
@@ -30,27 +31,33 @@ object MBMotion {
     const val DurMedium = 350
     const val DurLong = 600
 
-    // ---- Navigation transitions (forward = slide from right, back = reverse) ----
+    // ---- Navigation transitions --------------------------------------------------------
+    // Every screen is drawn on its own opaque canvas (Shell), so two screens never blend:
+    // drilling in, the new one slides in over the old, which drifts a quarter of the width
+    // beneath it; coming back reverses the two. Nothing fades, so nothing is ever seen
+    // through anything else.
+
+    private fun slide() = tween<androidx.compose.ui.unit.IntOffset>(DurMedium, easing = EaseEmphasized)
 
     val enterForward: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        slideInHorizontally(tween(DurMedium, easing = EaseEmphasized)) { it / 5 } +
-            fadeIn(tween(DurMedium))
+        slideInHorizontally(slide()) { it }
     }
     val exitForward: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        slideOutHorizontally(tween(DurMedium, easing = EaseEmphasized)) { -it / 8 } +
-            fadeOut(tween(DurShort))
+        slideOutHorizontally(slide()) { -it / 4 }
     }
     val enterBack: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        slideInHorizontally(tween(DurMedium, easing = EaseEmphasized)) { -it / 5 } +
-            fadeIn(tween(DurMedium))
+        slideInHorizontally(slide()) { -it / 4 }
     }
     val exitBack: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        slideOutHorizontally(tween(DurMedium, easing = EaseEmphasized)) { it / 8 } +
-            fadeOut(tween(DurShort))
+        slideOutHorizontally(slide()) { it }
     }
 
-    /** Tab-switch transition inside shells: subtle vertical drift + fade. */
+    /** A tab hop: the old tab is gone at once, the new one fades up with a small lift. */
     val tabEnter: EnterTransition =
-        slideInVertically(tween(DurMedium, easing = EaseOut)) { it / 30 } + fadeIn(tween(DurMedium))
+        slideInVertically(tween(DurShort, easing = EaseOut)) { it / 30 } + fadeIn(tween(DurShort))
     val tabExit: ExitTransition = fadeOut(tween(90))
+
+    /** The floating tab bar slips down and away when a screen without one opens, and back up on return. */
+    val barEnter: EnterTransition = slideInVertically(tween(DurShort, easing = EaseOut)) { it } + fadeIn(tween(DurShort))
+    val barExit: ExitTransition = slideOutVertically(tween(DurShort, easing = EaseOut)) { it } + fadeOut(tween(DurShort))
 }
