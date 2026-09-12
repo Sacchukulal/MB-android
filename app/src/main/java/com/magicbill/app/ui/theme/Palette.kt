@@ -37,6 +37,8 @@ data class MbColors(
     /** The two glows behind every screen. */
     val glow1: Color,
     val glow2: Color,
+    /** What darkens a page while another sits over it. */
+    val scrim: Color,
     val ok: Color,
     val okSoft: Color,
     val warn: Color,
@@ -78,6 +80,7 @@ val LightColors = MbColors(
     onAccentSoft = Color(0xFF064E3B),
     glow1 = Color(0xFF10B981),
     glow2 = Color(0xFF2DD4BF),
+    scrim = Color(0xFF0F172A),
     ok = Color(0xFF047857),
     okSoft = Color(0xFFD1FAE5),
     warn = Color(0xFFB45309),
@@ -115,6 +118,7 @@ val DarkColors = MbColors(
     onAccentSoft = Color(0xFFA7F3D0),
     glow1 = Color(0xFF10B981),
     glow2 = Color(0xFF2DD4BF),
+    scrim = Color(0xFF000000),
     ok = Color(0xFF34D399),
     okSoft = Color(0xFF064E3B),
     warn = Color(0xFFFBBF24),

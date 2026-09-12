@@ -57,6 +57,12 @@ object Target {
     val min = 48.dp
     val small = 36.dp
     val row = 56.dp
+    /** The primary, secondary and danger buttons. */
+    val button = 52.dp
+    /** A round action: the + and − on a dish. */
+    val round = 44.dp
+    /** A tinted disc: an icon on a row, the back button. */
+    val disc = 42.dp
 }
 
 /** A table card on the floor: as many to a row as the width allows, none narrower than [min]. */
@@ -64,10 +70,16 @@ object Tile {
     val min = 96.dp
     /** Width to height. */
     val ratio = 0.9f
-    /** The thick edge in the person's colour. */
-    val stripe = 5.dp
-    /** The thin line in the same colour round the other three sides. */
-    val line = 1.dp
+}
+
+/** How far a thing floats off the canvas. Soft, never a hard edge. */
+object Elevation {
+    /** A table card. */
+    val card = 6.dp
+    /** The reporter's pill under the status bar. */
+    val toast = 14.dp
+    /** The floating tab bar. */
+    val bar = 18.dp
 }
 
 object IconSize {

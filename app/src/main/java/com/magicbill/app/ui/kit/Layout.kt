@@ -3,7 +3,6 @@ package com.magicbill.app.ui.kit
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,8 +37,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,6 +61,7 @@ import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
 import com.magicbill.app.ui.theme.Radius
 import com.magicbill.app.ui.theme.Space
+import com.magicbill.app.ui.theme.Target
 
 /*
  * The kit, in the one language: OPEN CANVAS. Sections separate with typography and whitespace,
@@ -94,34 +96,19 @@ fun Page(
 val LocalPageMoving = compositionLocalOf { false }
 
 /**
- * A value that arrives while the page is moving waits until the page has landed. The rows
- * from the database come a moment after the page opens; composing and measuring them in the
- * middle of the move cost a whole frame on every phone. Held, they arrive when the page is
- * still, and [Arrives] fades them in. A value already there when the page is still is used
- * at once.
- */
-@Composable
-fun <T> held(value: T): T {
-    val moving = LocalPageMoving.current
-    var shown by remember { mutableStateOf(value) }
-    if (!moving && shown == value) return value
-    LaunchedEffect(value, moving) { if (!moving) shown = value }
-    return shown
-}
-
-/**
  * Content that arrives after its page — the rows from the database, a moment behind the
- * header — fades up into place instead of popping in mid-motion. [ready] false keeps it
- * unseen until it is. The fade is modulated per draw, never an offscreen copy.
- * Content ready on the page's first frame does not fade: the page itself is fading in
- * then, and a second fade inside it only repaints the page on every frame of the open.
+ * header — fades up into place instead of popping in. [ready] false keeps it unseen until it
+ * is. Content that arrives while the page is still moving is shown at once: the page itself
+ * is fading in then, and a second fade inside it would repaint the page on every frame of
+ * the move. The fade is modulated per draw, never an offscreen copy.
  */
 @Composable
 fun Arrives(modifier: Modifier = Modifier, ready: Boolean = true, content: @Composable () -> Unit) {
-    var shown by remember { mutableStateOf(ready) }
-    LaunchedEffect(ready) { shown = ready }
-    val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(MBMotion.DurShort, easing = MBMotion.EaseOut), label = "arrives")
-    Box(modifier.graphicsLayer { this.alpha = alpha; compositingStrategy = CompositingStrategy.ModulateAlpha }) { content() }
+    val target = if (ready) 1f else 0f
+    val alpha: State<Float> =
+        if (LocalPageMoving.current) rememberUpdatedState(target)
+        else animateFloatAsState(target, tween(MBMotion.DurShort, easing = MBMotion.EaseOut), label = "arrives")
+    Box(modifier.graphicsLayer { this.alpha = alpha.value; compositingStrategy = CompositingStrategy.ModulateAlpha }) { content() }
 }
 
 /** Large title + optional circular raised back button. */
@@ -131,7 +118,7 @@ fun PageHeader(title: String, subtitle: String? = null, back: (() -> Unit)? = nu
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (back != null) {
                 Box(
-                    Modifier.size(42.dp).clip(CircleShape).background(Mb.colors.raisedHigh).clickable(onClick = back),
+                    Modifier.size(Target.disc).clip(CircleShape).background(Mb.colors.raisedHigh).tappable(back, radius = Target.disc / 2),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Mb.colors.ink, modifier = Modifier.size(20.dp))
@@ -167,7 +154,7 @@ fun Section(title: String, trailing: (@Composable () -> Unit)? = null, first: Bo
 fun Panel(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValues(vertical = Space.s2), onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     val m = modifier.fillMaxWidth()
         .clip(RoundedCornerShape(Radius.lg))
-        .let { if (onClick != null) it.launchPoint().clickable(onClick = onClick) else it }
+        .let { if (onClick != null) it.tappable(onClick) else it }
         .padding(padding)
     Column(m) { content() }
 }
@@ -200,7 +187,7 @@ fun ListRow(
     Row(
         modifier.fillMaxWidth()
             .clip(RoundedCornerShape(Radius.lg))
-            .let { if (onClick != null) it.launchPoint().clickable(onClick = onClick) else it }
+            .let { if (onClick != null) it.tappable(onClick) else it }
             .padding(horizontal = 4.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -224,7 +211,7 @@ fun ListRow(
 /** A tinted icon disc for a ListRow's leading slot. */
 @Composable
 fun IconDisc(icon: ImageVector, tint: Color = Mb.colors.accent) {
-    Box(Modifier.size(42.dp).background(tint.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(Target.disc).background(tint.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
     }
 }

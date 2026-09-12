@@ -1,6 +1,5 @@
 package com.magicbill.app.ui.theme
 
-import android.os.Build
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -13,32 +12,25 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
-import androidx.compose.ui.graphics.BlurEffect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.GraphicsContext
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.util.lerp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavBackStackEntry
-import kotlin.math.roundToInt
 
 /** Shared motion vocabulary — every animated thing in the app draws from here
  *  so the whole app moves with one personality: quick, springy, never floaty. */
@@ -57,45 +49,25 @@ object MBMotion {
     const val DurLong = 600
 
     // ---- Page moves ------------------------------------------------------------------
-    // A page opens the way an app opens on a phone. The thing that was tapped — the table
-    // card, the button — grows into a window with rounded corners; for the first moment the
-    // window still shows the card itself, then the page crossfades in, drawn small and
-    // growing with the window until it is the whole screen. The page beneath zooms in a
-    // little, softens and darkens. Back is the same film run backwards: the page shrinks
-    // into its window, the card shows through as it lands, and the page beneath comes
-    // forward, sharp again. One pace for everything, a soft landing, no bounce.
+    // A page opens the way an app opens on a phone: a window with rounded corners grows out
+    // of the thing that was tapped, and the page fades in inside it as it grows. The page
+    // beneath zooms in a little and darkens; the tapped card is seen through the window
+    // until the page covers it. Back is the same film run backwards. One pace, a soft
+    // landing, no bounce.
     //
-    // While a page is beneath another, or coming back from beneath, it is a PICTURE of
-    // itself (a flat bitmap): the zoom and the blur are done on the picture, and the page
-    // is not even composed until it has landed — composing and measuring a floor of cards
-    // took the first quarter of the move on a slow phone. The picture is taken as the page
-    // goes beneath, and once more near the end of that move, when the press that opened the
-    // page over it has faded. A phone that cannot paint a picture on its graphics chip
-    // (before Android 9 it would be painted on the processor, slowly) gets the zoom and the
-    // dim on the live page and no blur; nothing else changes.
+    // Nothing is copied to a picture. Every page already draws through a layer of its own;
+    // a page beneath another simply keeps its last layer and stops drawing new ones, and the
+    // move transforms that layer. A page coming back is drawn live.
 
-    /** What was tapped: its rectangle on the screen, in pixels, and its corner radius. */
-    data class Launch(val bounds: Rect, val radius: Float)
+    /** What was tapped: its rectangle on the screen, in pixels, its corner radius, and when. */
+    data class Launch(val bounds: Rect, val radius: Float, val atMs: Long)
 
-    /** The part a page plays in the move it is in. */
-    enum class Role { Open, Beneath, Return, Close, Tab }
+    /** The part a page plays in the move it is in. A tab hop has no parts: both tabs draw live. */
+    enum class Role { Open, Beneath, Return, Close }
 
-    /** A page's picture of itself, and a small soft copy of it for the blur. */
-    class Look(val sharp: ImageBitmap, val soft: ImageBitmap) {
-        fun recycle() { sharp.asAndroidBitmap().recycle(); soft.asAndroidBitmap().recycle() }
-    }
-
-    /**
-     * The one pace of every page move, on both sides of it: away quickly, a soft but definite
-     * landing, no bounce. A curve, not a spring: a spring creeps for its last few percent,
-     * and a window that is still 2% short of its card while the card already shows through
-     * it is seen twice.
-     */
+    /** The one pace of every page move: away quickly, a soft but definite landing. */
     fun <T> pace(): FiniteAnimationSpec<T> = tween(MoveDuration, easing = CubicBezierEasing(0.35f, 0f, 0.15f, 1f))
     const val MoveDuration = 400
-
-    /** Pictures are painted on the graphics chip from Android 9; before that, slowly, on the processor. */
-    val pictures = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
 
     /** A page opened by nothing in particular grows a little, from the middle. */
     private const val CentreScale = 0.86f
@@ -103,79 +75,52 @@ object MBMotion {
     private const val ZoomBehind = 0.06f
     /** How dark the page beneath goes. */
     private const val DimBehind = 0.2f
-    /** The soft copy is this many times smaller; stretched back, it is the blur. */
-    private const val SoftShrink = 6
-    /** The card shows in the window until here, and the page is whole from here. */
-    private const val CardUntil = 0.15f
-    private const val PageFrom = 0.6f
-    /**
-     * How long before its move ends a page going beneath has its picture taken again: late
-     * enough that the press which opened the page over it has faded, early enough that the
-     * page is still composed (it is dropped the moment the move ends).
-     */
-    const val SnapLead = 60L
+    /** The page is unseen in its window until here, and whole from here. */
+    private const val PageFrom = 0.05f
+    private const val PageWhole = 0.5f
+    /** A tap older than this opened nothing: the next page grows from the middle. */
+    private const val TapFor = 600L
 
     /** The last thing tapped; the next page opens from it. */
-    @Volatile private var lastTap: Launch? = null
-    /** Where each page opened from, by back-stack entry (null: nothing in particular), and the lock for all of these. */
-    private val origins = HashMap<String, Launch?>()
-    private val roles = HashMap<String, Role>()
-    /** For a page opening or closing: the page under it. */
-    private val beneathOf = HashMap<String, String>()
+    @Volatile private var pending: Launch? = null
+    /** Where each page opened from, by back-stack entry (null: nothing in particular). */
+    private val origins = mutableStateMapOf<String, Launch?>()
+    private val roles = mutableStateMapOf<String, Role>()
     private val watched = HashSet<String>()
-    /** Each page's picture, by entry. Observable, so a page draws again the moment its picture is there. */
-    private val looks = mutableStateMapOf<String, Look>()
+
+    /** The kit's tappable says what was pressed and where, at the press that opens a page. */
+    fun opensFrom(launch: Launch) { pending = launch }
 
     /**
-     * The kit's clickables say what was pressed and where; nothing else needs to know. The
-     * page in front takes its picture there and then: the finger is down, nothing else is
-     * happening, and the press has not been drawn yet, so the picture is of the page at rest.
-     * If the press opens a page, the picture is ready before the move starts.
+     * Whether a finger is down on something. A page keeps recording its layer only while
+     * nothing is pressed, so the layer it leaves behind is the page at rest — never a
+     * half-drawn ripple or a card mid-squish.
      */
-    suspend fun tapped(launch: Launch) {
-        lastTap = launch
-        val (id, taker) = synchronized(origins) { inFront } ?: return
-        val look = taker() ?: return
-        synchronized(origins) { staged?.second?.recycle(); staged = id to look; stagedAt = System.currentTimeMillis() }
-    }
-    /** The page in front, and how to take its picture; set by the page once it is still. */
-    private var inFront: Pair<String, suspend () -> Look?>? = null
-    private var staged: Pair<String, Look>? = null
-    private var stagedAt = 0L
-    /** For how long a picture taken at a press still counts as current. */
-    private const val StagedFor = 1500L
+    var pressing by mutableStateOf(false)
+        private set
+    private var presses = 0
+    fun pressBegan() { synchronized(this) { presses++; pressing = true } }
+    fun pressEnded() { synchronized(this) { presses = (presses - 1).coerceAtLeast(0); pressing = presses > 0 } }
 
-    fun inFront(entryId: String, taker: suspend () -> Look?) = synchronized(origins) { inFront = entryId to taker }
-    /** The picture taken at the press that opened the page over [entryId], if it is that recent. */
-    fun staged(entryId: String): Look? = synchronized(origins) {
-        val s = staged ?: return null
-        staged = null
-        if (s.first == entryId && System.currentTimeMillis() - stagedAt < StagedFor) s.second else { s.second.recycle(); null }
-    }
+    fun origin(entryId: String): Launch? = origins[entryId]
+    fun role(entryId: String): Role? = roles[entryId]
 
-    fun origin(entryId: String): Launch? = synchronized(origins) { origins[entryId] }
-    fun role(entryId: String): Role? = synchronized(origins) { roles[entryId] }
-    fun beneath(entryId: String): String? = synchronized(origins) { beneathOf[entryId] }
-    fun look(entryId: String?): Look? = entryId?.let { looks[it] }
-
-    /** The page's picture is this, now. */
-    fun keep(entryId: String, look: Look) { looks.put(entryId, look)?.recycle() }
-    /**
-     * The page has landed and plays no part any more. Its picture stays until the next one
-     * replaces it or the entry ends: a page over it may still be drawing the card out of it
-     * for a frame, and a blank card is worse than a picture kept a little longer.
-     */
-    fun landed(entryId: String) { synchronized(origins) { roles.remove(entryId) } }
+    /** The page has landed and plays no part any more. */
+    fun landed(entryId: String) { roles.remove(entryId) }
 
     // The host asks for a transition more than once per move (once for the size, once per
     // page), so these only note the parts; nothing is taken away until the entry is gone.
-    private fun move(top: String, under: String, topRole: Role, underRole: Role) = synchronized(origins) {
-        roles[top] = topRole; roles[under] = underRole; beneathOf[top] = under
+    private fun move(top: String, under: String, topRole: Role, underRole: Role) {
+        roles[top] = topRole; roles[under] = underRole
     }
 
     val enterForward: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
         move(targetState.id, initialState.id, Role.Open, Role.Beneath)
-        synchronized(origins) { if (!origins.containsKey(targetState.id)) { origins[targetState.id] = lastTap; lastTap = null } }
+        if (!origins.containsKey(targetState.id)) {
+            val tap = pending
+            origins[targetState.id] = tap?.takeIf { System.currentTimeMillis() - it.atMs < TapFor }
+            pending = null
+        }
         EnterTransition.None
     }
     val exitForward: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
@@ -192,7 +137,6 @@ object MBMotion {
     }
 
     /** A tab hop: the old tab is gone at once, the new one fades up with a small lift. */
-    fun tabHop(from: String, to: String) = synchronized(origins) { roles[from] = Role.Tab; roles[to] = Role.Tab }
     val tabEnter: EnterTransition =
         slideInVertically(tween(DurShort, easing = EaseOut)) { it / 30 } + fadeIn(tween(DurShort))
     val tabExit: ExitTransition = fadeOut(tween(90))
@@ -201,13 +145,9 @@ object MBMotion {
     val barEnter: EnterTransition = slideInVertically(tween(DurShort, easing = EaseOut)) { it } + fadeIn(tween(DurShort))
     val barExit: ExitTransition = slideOutVertically(tween(DurShort, easing = EaseOut)) { it } + fadeOut(tween(DurShort))
 
-    /**
-     * Keeps what is known about [entry] for as long as it is on the back stack. A page's
-     * composition comes and goes while the entry is still there — it is dropped once another
-     * page has opened over it — so nothing can be let go before the entry itself ends.
-     */
+    /** Keeps what is known about [entry] for as long as it is on the back stack. */
     fun watch(entry: NavBackStackEntry) {
-        synchronized(origins) { if (!watched.add(entry.id)) return }
+        synchronized(watched) { if (!watched.add(entry.id)) return }
         if (entry.lifecycle.currentState == Lifecycle.State.DESTROYED) { forgotten(entry.id); return }
         entry.lifecycle.addObserver(object : LifecycleEventObserver {
             override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
@@ -218,48 +158,31 @@ object MBMotion {
 
     /** The page is gone from the graph: everything about it goes with it. */
     private fun forgotten(entryId: String) {
-        synchronized(origins) { origins.remove(entryId); roles.remove(entryId); beneathOf.remove(entryId); watched.remove(entryId) }
-        looks.remove(entryId)?.recycle()
+        synchronized(watched) { watched.remove(entryId) }
+        origins.remove(entryId); roles.remove(entryId)
+        drop(entryId)
     }
 
-    // ---- Painting a move -------------------------------------------------------------
+    // ---- The picture a page leaves behind -------------------------------------------
+    // A page beneath another is taken apart by the host once the move ends, and put back
+    // together only when it returns. A layer does not outlive that (it comes back without
+    // its children), so as the page goes beneath ONE picture of its layer is taken — once per
+    // move, off the drawing thread's critical path — and the return draws that picture, the
+    // page as it was, until the page has landed and is whole. The picture is dropped, never
+    // recycled: a recycled bitmap still on its way to the screen is a crash.
 
-    /**
-     * The page's picture: its layer painted into a bitmap, and a small soft copy for the
-     * blur. Null on a phone that would paint it slowly. Main thread; the layer must have
-     * been drawn.
-     */
-    suspend fun take(page: GraphicsLayer, graphics: GraphicsContext, density: Density, direction: LayoutDirection): Look? {
-        if (!pictures) return null
-        val sharp = page.toImageBitmap()
-        val w = (sharp.width / SoftShrink).coerceAtLeast(1)
-        val h = (sharp.height / SoftShrink).coerceAtLeast(1)
-        val small = graphics.createGraphicsLayer()
-        try {
-            // Where the phone has a real blur, it smooths the small copy; shrinking alone softens it.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) small.renderEffect = BlurEffect(2f, 2f)
-            small.record(density, direction, IntSize(w, h)) {
-                drawImage(sharp, dstSize = IntSize(w, h), filterQuality = FilterQuality.High)
-            }
-            return Look(sharp, small.toImageBitmap())
-        } finally {
-            graphics.releaseGraphicsLayer(small)
-        }
-    }
+    private val kept = HashMap<String, ImageBitmap>()
 
-    /** The page beneath, [b] of the way under (0: in front, 1: fully under): zoomed a little, softened, darkened. */
-    fun DrawScope.drawBeneath(look: Look, b: Float) {
-        val zoom = 1f + ZoomBehind * b
-        val dst = IntSize((size.width * zoom).roundToInt(), (size.height * zoom).roundToInt())
-        val at = IntOffset(((size.width - dst.width) / 2).roundToInt(), ((size.height - dst.height) / 2).roundToInt())
-        drawImage(look.sharp, dstOffset = at, dstSize = dst)
-        if (b > 0f) {
-            drawImage(look.soft, dstOffset = at, dstSize = dst, alpha = b, filterQuality = FilterQuality.High)
-            drawRect(Color.Black, alpha = DimBehind * b)
-        }
-    }
+    fun keep(entryId: String, picture: ImageBitmap) { synchronized(kept) { kept[entryId] = picture } }
 
-    /** How far the page beneath zooms in, for a page drawn live because it has no picture. */
+    fun kept(entryId: String): ImageBitmap? = synchronized(kept) { kept[entryId] }
+
+    /** The page is whole again, or gone: the picture is let go. */
+    fun drop(entryId: String) { synchronized(kept) { kept.remove(entryId) } }
+
+    // ---- The geometry of a move ------------------------------------------------------
+
+    /** How far the page beneath zooms in, [b] of the way under (0: in front, 1: fully under). */
     fun zoomBehind(b: Float): Float = 1f + ZoomBehind * b
     fun dimBehind(b: Float): Float = DimBehind * b
 
@@ -289,17 +212,8 @@ object MBMotion {
             Outline.Rounded(RoundRect(0f, 0f, size.width, height, CornerRadius(radius)))
     }
 
-    /** How much of the page shows in the window at [p]: the card until [CardUntil], the page from [PageFrom]. */
-    fun pageAlpha(p: Float): Float = smooth((p - CardUntil) / (PageFrom - CardUntil))
-
-    /**
-     * How much of the card shows in the window at [p]. The card's own picture is under the
-     * window on the page beneath, so as the window lands on it the two would be seen at once,
-     * a few pixels apart: the window's copy dissolves over the last [CardGone] of the way,
-     * and the card itself is what is left.
-     */
-    fun cardAlpha(p: Float): Float = (1f - pageAlpha(p)) * smooth((p - CardGone) / CardGone)
-    private const val CardGone = 0.08f
+    /** How much of the page shows in its window at [p]: nothing until [PageFrom], all of it from [PageWhole]. */
+    fun pageAlpha(p: Float): Float = smooth((p - PageFrom) / (PageWhole - PageFrom))
 
     private fun smooth(x: Float): Float { val t = x.coerceIn(0f, 1f); return t * t * (3f - 2f * t) }
 }

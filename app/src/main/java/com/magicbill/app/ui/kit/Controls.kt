@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -43,7 +42,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,7 +81,7 @@ import com.magicbill.app.ui.theme.Target
  * size comes from the theme — nothing here is spelled by number.
  */
 
-/** The one button that does the thing on this screen — the gradient, 52dp, press squish. */
+/** The one button that does the thing on this screen — the gradient, the press squish. */
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false, icon: ImageVector? = null) {
     val interaction = remember { MutableInteractionSource() }
@@ -93,16 +91,16 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
     Box(
         modifier.pressScale(interaction).alpha(if (on) 1f else 0.55f).clip(shape)
             .background(Brush.horizontalGradient(listOf(c.accent, c.accent2)))
-            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = on, onClick = onClick)
-            .defaultMinSize(minHeight = 52.dp)
-            .padding(horizontal = 22.dp),
+            .tappable(onClick, enabled = on, interactionSource = interaction)
+            .defaultMinSize(minHeight = Target.button)
+            .padding(horizontal = Space.s5),
         contentAlignment = Alignment.Center,
     ) {
         if (busy) {
-            CircularProgressIndicator(Modifier.size(20.dp), color = c.onAccent, strokeWidth = 2.dp)
+            CircularProgressIndicator(Modifier.size(IconSize.md), color = c.onAccent, strokeWidth = 2.dp)
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) { Icon(icon, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(19.dp)); HGap(9.dp) }
+                if (icon != null) { Icon(icon, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(IconSize.md)); HGap() }
                 Text(text, style = Mb.type.button, color = c.onAccent)
             }
         }
@@ -117,13 +115,13 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
     Box(
         modifier.pressScale(interaction).alpha(if (enabled) 1f else 0.55f).clip(RoundedCornerShape(Radius.lg))
             .background(c.raisedHigh)
-            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
-            .defaultMinSize(minHeight = 52.dp)
-            .padding(horizontal = 22.dp),
+            .tappable(onClick, enabled = enabled, interactionSource = interaction)
+            .defaultMinSize(minHeight = Target.button)
+            .padding(horizontal = Space.s5),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (icon != null) { Icon(icon, contentDescription = null, tint = c.ink, modifier = Modifier.size(19.dp)); HGap(9.dp) }
+            if (icon != null) { Icon(icon, contentDescription = null, tint = c.ink, modifier = Modifier.size(IconSize.md)); HGap() }
             Text(text, style = Mb.type.button, color = c.ink)
         }
     }
@@ -134,7 +132,7 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 fun QuietButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, tone: Tone = Tone.Quiet) {
     val color = if (tone == Tone.Quiet) Mb.colors.accent else tone.color()
     Box(
-        modifier.clip(RoundedCornerShape(Radius.lg)).launchPoint().clickable(enabled = enabled, onClick = onClick).defaultMinSize(minHeight = Target.small).padding(horizontal = 12.dp),
+        modifier.clip(RoundedCornerShape(Radius.lg)).tappable(onClick, enabled = enabled).defaultMinSize(minHeight = Target.small).padding(horizontal = Space.s3),
         contentAlignment = Alignment.Center,
     ) { Text(text, style = Mb.type.button, color = color) }
 }
@@ -145,23 +143,25 @@ fun DangerButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifie
     Box(
         modifier.pressScale(interaction).alpha(if (enabled) 1f else 0.55f).clip(RoundedCornerShape(Radius.lg))
             .background(Mb.colors.dangerSoft)
-            .launchPoint().clickable(interactionSource = interaction, indication = ripple(), enabled = enabled, onClick = onClick)
-            .defaultMinSize(minHeight = 52.dp)
-            .padding(horizontal = 22.dp),
+            .tappable(onClick, enabled = enabled, interactionSource = interaction)
+            .defaultMinSize(minHeight = Target.button)
+            .padding(horizontal = Space.s5),
         contentAlignment = Alignment.Center,
     ) { Text(text, style = Mb.type.button, color = Mb.colors.danger) }
 }
 
+/** One icon in a round touch target: the header's actions. */
 @Composable
 fun IconAction(icon: ImageVector, description: String, onClick: () -> Unit, tint: Color? = null, enabled: Boolean = true) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Target.min)) {
-        Icon(icon, contentDescription = description, tint = tint ?: Mb.colors.ink)
-    }
+    Box(
+        Modifier.size(Target.min).clip(CircleShape).alpha(if (enabled) 1f else 0.4f).tappable(onClick, enabled = enabled, radius = Target.min / 2),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, contentDescription = description, tint = tint ?: Mb.colors.ink) }
 }
 
 /** A round tonal button with one icon: the + and − on a dish, the back arrow. Squishes when pressed. */
 @Composable
-fun RoundAction(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, filled: Boolean = false, size: androidx.compose.ui.unit.Dp = 44.dp) {
+fun RoundAction(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, filled: Boolean = false, size: androidx.compose.ui.unit.Dp = Target.round) {
     val interaction = remember { MutableInteractionSource() }
     val haptics = LocalHapticFeedback.current
     val c = Mb.colors
@@ -169,10 +169,7 @@ fun RoundAction(icon: ImageVector, description: String, onClick: () -> Unit, mod
     val fg by animateColorAsState(if (filled) c.onAccent else c.accent, label = "roundFg")
     Box(
         modifier.size(size).pressScale(interaction, 0.88f).alpha(if (enabled) 1f else 0.4f).clip(CircleShape).background(bg)
-            .clickable(interactionSource = interaction, indication = ripple(), enabled = enabled) {
-                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                onClick()
-            },
+            .tappable({ haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onClick() }, enabled = enabled, interactionSource = interaction, radius = size / 2),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, contentDescription = description, tint = fg, modifier = Modifier.size(IconSize.md)) }
 }
@@ -189,8 +186,8 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
         style = Mb.type.button,
         color = fg,
         modifier = modifier.clip(RoundedCornerShape(percent = 50)).background(bg)
-            .clickable { if (!selected) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onClick() }
-            .padding(horizontal = 16.dp, vertical = 9.dp),
+            .tappable({ if (!selected) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onClick() }, radius = Radius.pill)
+            .padding(horizontal = Space.s4, vertical = Space.s2),
     )
 }
 
@@ -312,7 +309,7 @@ fun Stepper(value: String, onMinus: () -> Unit, onPlus: () -> Unit, modifier: Mo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onMinus, enabled = enabled, modifier = Modifier.size(Target.min)) { Icon(Icons.Outlined.Remove, contentDescription = "Less", tint = Mb.colors.ink) }
-        Box(Modifier.defaultMinSize(minWidth = 28.dp), contentAlignment = Alignment.Center) { Ticker(value) }
+        Box(Modifier.defaultMinSize(minWidth = IconSize.lg), contentAlignment = Alignment.Center) { Ticker(value) }
         IconButton(onClick = onPlus, enabled = enabled, modifier = Modifier.size(Target.min)) { Icon(Icons.Outlined.Add, contentDescription = "More", tint = Mb.colors.ink) }
     }
 }
@@ -326,12 +323,12 @@ fun PinField(pin: String, onChange: (String) -> Unit, length: Int = 4, modifier:
             repeat(length) { i ->
                 val active = i == pin.length
                 Box(
-                    Modifier.size(Target.min, Target.min + 8.dp).clip(RoundedCornerShape(14.dp))
+                    Modifier.size(Target.min, Target.min + Space.s2).clip(RoundedCornerShape(Radius.md))
                         .background(c.raisedHigh)
                         .then(if (active) Modifier.background(c.accent.copy(alpha = 0.12f)) else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (i < pin.length) Box(Modifier.size(12.dp).clip(CircleShape).background(c.ink))
+                    if (i < pin.length) Box(Modifier.size(Space.s3).clip(CircleShape).background(c.ink))
                 }
             }
         }
@@ -344,7 +341,7 @@ fun PinField(pin: String, onChange: (String) -> Unit, length: Int = 4, modifier:
             keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
             textStyle = Mb.type.body.copy(color = Color.Transparent),
             cursorBrush = SolidColor(Color.Transparent),
-            modifier = Modifier.fillMaxWidth().height(Target.min + 8.dp).alpha(0.01f),
+            modifier = Modifier.fillMaxWidth().height(Target.min + Space.s2).alpha(0.01f),
         )
     }
 }

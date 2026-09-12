@@ -27,11 +27,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.magicbill.app.core.formatShortINR
+import com.magicbill.app.core.Money
 import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
 
-data class TrendPoint(val label: String, val value: Double)
+/** One bar of a trend: its label and its money, in paise like everything else. */
+data class TrendPoint(val label: String, val paise: Long)
 
 /**
  * One series of thin rounded bars growing from the baseline with a staggered entrance; tap a
@@ -52,13 +53,13 @@ fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier, height: 
         growth.animateTo(1f, tween(MBMotion.DurLong, easing = MBMotion.EaseOut))
     }
 
-    val maxValue = points.maxOf { it.value }.coerceAtLeast(1.0)
+    val top = points.maxOf { it.paise }.coerceAtLeast(1L).toFloat()
     val sel = points[selected]
 
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(sel.label, style = Mb.type.label, color = c.inkMuted)
-            Text(formatShortINR(sel.value), style = Mb.type.button, color = c.ink)
+            Text(Money.short(sel.paise), style = Mb.type.button, color = c.ink)
         }
         val density = LocalDensity.current
         Canvas(
@@ -81,7 +82,7 @@ fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier, height: 
             points.forEachIndexed { i, p ->
                 val stagger = (i.toFloat() / points.size) * 0.35f
                 val t = ((growth.value - stagger) / (1f - stagger)).coerceIn(0f, 1f)
-                val fullH = (p.value / maxValue).toFloat() * (chartHeight * 0.92f)
+                val fullH = (p.paise.toFloat() / top) * (chartHeight * 0.92f)
                 val h = (fullH * t).coerceAtLeast(with(density) { 3.dp.toPx() })
                 val left = i * slot + (slot - barWidth) / 2f
                 drawRoundRect(color = if (i == selected) bar else dimBar, topLeft = Offset(left, chartHeight - h), size = Size(barWidth, h), cornerRadius = CornerRadius(corner, corner))

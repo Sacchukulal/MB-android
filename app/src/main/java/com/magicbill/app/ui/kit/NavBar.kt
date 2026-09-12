@@ -31,6 +31,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.magicbill.app.ui.theme.Elevation
 import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
 
@@ -49,7 +50,7 @@ fun PillNavBar(items: List<PillNavItem>, selectedIndex: Int, onSelect: (Int) -> 
     Box(modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 10.dp)) {
         Row(
             Modifier.fillMaxWidth()
-                .shadow(18.dp, RoundedCornerShape(30.dp), spotColor = c.bg)
+                .shadow(Elevation.bar, RoundedCornerShape(30.dp), spotColor = c.bg)
                 .background(c.raised, RoundedCornerShape(30.dp))
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,

@@ -1,6 +1,8 @@
 package com.magicbill.app.ui.theme
 
 import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalContentColor
@@ -17,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
-import com.magicbill.app.ui.kit.Glow
 
 /*
  * The theme: ONE palette (Palette.kt) and ONE set of scales (Tokens.kt), and everything else
@@ -102,7 +103,9 @@ fun MagicBillTheme(dark: Boolean, content: @Composable () -> Unit) {
                 LocalTextStyle provides mb.type.body,
                 LocalOverscrollFactory provides RubberBandOverscrollFactory,
             ) {
-                Glow(Modifier.fillMaxSize()) { content() }
+                // Every screen paints its own canvas and glow; the root is a plain ground for
+                // the instant between two screens.
+                Box(Modifier.fillMaxSize().background(colors.bg)) { content() }
             }
         }
     }

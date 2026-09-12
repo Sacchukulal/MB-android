@@ -19,6 +19,7 @@ import com.magicbill.app.cloud.Account
 import com.magicbill.app.cloud.People
 import com.magicbill.app.cloud.PermissionCode
 import com.magicbill.app.core.Answer
+import com.magicbill.app.core.Money
 import com.magicbill.app.core.parseJsonOrNull
 import com.magicbill.app.db.MbDatabase
 import com.magicbill.app.nav.RoleEdit
@@ -137,7 +138,7 @@ fun RoleEditScreen(back: () -> Unit, vm: RoleEditViewModel = hiltViewModel()) {
         Section("Discount they may give")
         Field(f.maxDiscountPercent, { v -> vm.update { it.copy(maxDiscountPercent = v.filter { c -> c.isDigit() }.take(3)) } }, "Up to, percent", keyboard = KeyboardType.Number, placeholder = "10")
         VGap(Gap.field)
-        Field(f.maxDiscountRupees, { v -> vm.update { it.copy(maxDiscountRupees = v.filter { c -> c.isDigit() }.take(7)) } }, "Up to, rupees on one bill", keyboard = KeyboardType.Number, placeholder = "200", trailing = { Text("₹", style = Mb.type.body, color = Mb.colors.inkMuted) })
+        Field(f.maxDiscountRupees, { v -> vm.update { it.copy(maxDiscountRupees = v.filter { c -> c.isDigit() }.take(7)) } }, "Up to, rupees on one bill", keyboard = KeyboardType.Number, placeholder = "200", trailing = { Text(Money.SYMBOL, style = Mb.type.body, color = Mb.colors.inkMuted) })
         val counter = codes.filter { it.scope == "counter" || it.scope == "both" }
         val phone = codes.filter { it.scope == "phone" }
         if (codes.isEmpty()) { Section("Permissions"); Text("Could not fetch the list of permissions. Pull down on Staff and try again.", style = Mb.type.caption, color = Mb.colors.inkMuted) }

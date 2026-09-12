@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.magicbill.app.ui.theme.Elevation
 import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.MBMotion
 import com.magicbill.app.ui.theme.Mb
@@ -105,7 +106,7 @@ fun ToastHost(reporter: Reporter, modifier: Modifier = Modifier) {
                 style = Mb.type.label,
                 color = Mb.colors.ink,
                 modifier = Modifier
-                    .shadow(14.dp, RoundedCornerShape(percent = 50), spotColor = Mb.colors.bg)
+                    .shadow(Elevation.toast, RoundedCornerShape(percent = 50), spotColor = Mb.colors.bg)
                     .background(Mb.colors.raisedHigh, RoundedCornerShape(percent = 50))
                     .padding(horizontal = Space.s4, vertical = Space.s3),
             )

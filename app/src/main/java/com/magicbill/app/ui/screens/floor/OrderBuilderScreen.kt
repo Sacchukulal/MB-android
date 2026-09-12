@@ -41,14 +41,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
 import com.magicbill.app.core.Answer
 import com.magicbill.app.core.Money
-import com.magicbill.app.core.formatINR
 import com.magicbill.app.counter.Floor
 import com.magicbill.app.counter.Stream
 import com.magicbill.app.db.FloorItemRow
 import com.magicbill.app.nav.NewOrder
 import com.magicbill.app.ui.kit.AnimatedRupees
 import com.magicbill.app.ui.kit.Arrives
-import com.magicbill.app.ui.kit.held
 import com.magicbill.app.ui.kit.ChipRow
 import com.magicbill.app.ui.kit.Empty
 import com.magicbill.app.ui.kit.Field
@@ -179,10 +177,10 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
         Column(Modifier.padding(horizontal = Gap.page)) {
             SearchField(search, vm::setSearch, "Search menu…")
             VGap(Gap.field)
-            ChipRow(held(categories), picked) { vm.pick(it) }
+            ChipRow(categories, picked) { vm.pick(it) }
             VGap(Gap.field)
         }
-        val menu = held(rows)
+        val menu = rows
         if (menu != null && menu.isEmpty()) {
             Empty(if (search.isBlank()) "The menu has not come from the counter yet." else "No dish by that name.")
         }
@@ -208,7 +206,7 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Ticker(if (tally.items == 1) "1 item" else "${tally.items} items", style = Mb.type.caption, color = Mb.colors.inkMuted)
-                    AnimatedRupees(tally.estimatePaise / 100.0, style = Mb.type.stat)
+                    AnimatedRupees(tally.estimatePaise, style = Mb.type.stat)
                 }
                 PrimaryButton("Send to kitchen", { vm.send(done) }, enabled = tally.items > 0)
             }
@@ -236,7 +234,7 @@ private fun DishRow(row: OrderBuilderViewModel.MenuRow, modifier: Modifier = Mod
     ) {
         Column(Modifier.weight(1f)) {
             Text(row.item.name, style = Mb.type.body, color = if (row.item.isAvailable) c.ink else c.inkFaint)
-            Text(if (row.item.isAvailable) "₹" + row.item.price.removeSuffix(".00") else "Sold out", style = Mb.type.caption, color = c.inkMuted)
+            Text(if (row.item.isAvailable) Money.fromPlain(row.item.price) else "Sold out", style = Mb.type.caption, color = c.inkMuted)
         }
         if (!row.item.isAvailable) return@Row
         AnimatedVisibility(visible = qty > 0, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
@@ -248,6 +246,3 @@ private fun DishRow(row: OrderBuilderViewModel.MenuRow, modifier: Modifier = Mod
         RoundAction(Icons.Outlined.Add, "More", onPlus, filled = qty > 0)
     }
 }
-
-@Suppress("unused")
-private fun keep() = formatINR(0.0)

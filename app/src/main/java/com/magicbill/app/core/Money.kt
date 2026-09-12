@@ -10,11 +10,16 @@ import kotlin.math.abs
  * or the cloud computed — so there is no add, no tax, no discount here on purpose.
  */
 object Money {
-    private const val RUPEE = "₹"
+    /** The one rupee sign, for a label beside a field. */
+    const val SYMBOL = "₹"
+    private const val RUPEE = SYMBOL
     private const val MINUS = "−"
 
     /** "₹1,23,456.50". */
     fun rupees(paise: Long): String = sign(paise) + RUPEE + plainAbs(paise)
+
+    /** The counter's "1187.00", shown the one way: "₹1,187.00". Text that is not money is shown as it came. */
+    fun fromPlain(text: String): String = parsePlain(text)?.let { rupees(it) } ?: text
 
     /** "1,23,456.50" — no symbol, two decimals, for a column of numbers. */
     fun plain(paise: Long): String = sign(paise) + plainAbs(paise)
@@ -23,6 +28,18 @@ object Money {
     fun whole(paise: Long): String {
         val rounded = (abs(paise) + 50) / 100
         return sign(paise) + RUPEE + groupIndian(rounded)
+    }
+
+    /** A chart's readout: "₹1.2k", "₹2.4L", "₹1.5Cr"; under a thousand, whole rupees. */
+    fun short(paise: Long): String {
+        val rupees = abs(paise) / 100.0
+        val figure = when {
+            rupees >= 1e7 -> String.format(java.util.Locale.US, "%.1fCr", rupees / 1e7)
+            rupees >= 1e5 -> String.format(java.util.Locale.US, "%.1fL", rupees / 1e5)
+            rupees >= 1e3 -> String.format(java.util.Locale.US, "%.1fk", rupees / 1e3)
+            else -> ((abs(paise) + 50) / 100).toString()
+        }
+        return sign(paise) + RUPEE + figure
     }
 
     private fun sign(paise: Long) = if (paise < 0) MINUS else ""

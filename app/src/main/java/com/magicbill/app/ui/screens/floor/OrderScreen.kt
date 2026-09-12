@@ -42,7 +42,6 @@ import com.magicbill.app.nav.OrderScreen
 import com.magicbill.app.ui.kit.Arrives
 import com.magicbill.app.ui.kit.Badge
 import com.magicbill.app.ui.kit.ChipRow
-import com.magicbill.app.ui.kit.held
 import com.magicbill.app.ui.kit.Empty
 import com.magicbill.app.ui.kit.Field
 import com.magicbill.app.ui.kit.IconAction
@@ -124,14 +123,15 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     val stream by vm.stream.state.collectAsStateWithLifecycle()
     val reporter = LocalReporter.current
     LaunchedEffect(Unit) { vm.opened() }
-    // The header alone for the instant before the database answers.
-    val view = held(loaded) ?: run { Page(vm.title, back = back) {}; return }
+    // The page is whole from its first frame; the rows fade in the moment the database answers.
+    val view = loaded
     var lineMenu by remember { mutableStateOf<LineView?>(null) }
     var more by remember { mutableStateOf(false) }
     var reasonFor by remember { mutableStateOf<String?>(null) } // "void:<line>" | "cancel"
     var moving by remember { mutableStateOf(false) }
     var settling by remember { mutableStateOf(false) }
-    val o = view.order
+    val o = view?.order
+    val lines = view?.lines.orEmpty()
     val closed = o?.closedSays
     val title = o?.let { orderTitle(it.tableLabel, it.orderType) } ?: vm.title
     val subtitle = listOfNotNull(o?.token?.let { "Token #$it" }, o?.by?.takeIf { o.mine != true }?.let { "$it's order" }).joinToString(" · ").ifBlank { null }
@@ -139,20 +139,19 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     Page(title, subtitle, back = back, scroll = false, bottomPadding = 0.dp, actions = {
         if (o?.settleAsked == true) Badge("Settle asked", Tone.Ok) else if (o?.billAsked == true) Badge("Bill printed", Tone.Ok)
         StreamBadge(stream, quietWhenLive = true)
-        if (closed == null) IconAction(Icons.Outlined.MoreVert, "More", { more = true })
+        if (o != null && closed == null) IconAction(Icons.Outlined.MoreVert, "More", { more = true })
     }) {
         if (closed != null) { Notice(Tone.Info, closed, action = { SecondaryButton("Back", back) }); VGap(Gap.field) }
-        if (o == null) { Empty("This order is not on the phone."); return@Page }
-        Arrives(Modifier.weight(1f).fillMaxWidth()) {
-        LazyColumn(Modifier.fillMaxSize()) {
-            if (view.lines.isEmpty()) item { Empty("Nothing on this order yet. Add the first dish.") }
-            items(view.lines, key = { it.line }) { l ->
+        if (view != null && o == null) { Empty("This order is not on the phone."); return@Page }
+        Arrives(Modifier.weight(1f).fillMaxWidth(), ready = o != null) {
+        if (o != null) LazyColumn(Modifier.fillMaxSize()) {
+            if (lines.isEmpty()) item { Empty("Nothing on this order yet. Add the first dish.") }
+            items(lines, key = { it.line }) { l ->
                 ListRow(
                     "${l.qty} × ${l.name}", l.note,
-                    modifier = Modifier.animateItem(),
                     trailing = {
                         Column(horizontalAlignment = Alignment.End) {
-                            if (l.amount.isNotBlank()) Text("₹" + l.amount, style = Mb.type.cell, color = Mb.colors.ink)
+                            if (l.amount.isNotBlank()) Text(Money.fromPlain(l.amount), style = Mb.type.cell, color = Mb.colors.ink)
                             when {
                                 o.sending && l.amount.isBlank() -> Badge("Sending", Tone.Info)
                                 l.sentToKitchen -> Badge("In kitchen", Tone.Ok)
@@ -165,14 +164,14 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             }
             item {
                 VGap(Gap.field)
-                KeyValue("Total", "₹" + o.total, bold = true)
+                KeyValue("Total", Money.fromPlain(o.total), bold = true)
                 // The kitchen's note rides with the order; it is changed where dishes are added.
                 o.note?.takeIf { it.isNotBlank() }?.let { KeyValue("Note", it) }
                 VGap(Space.s7)
             }
         }
         }
-        if (closed == null) {
+        if (o != null && closed == null) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Gap.field)) {
                 PrimaryButton(
                     "Add dishes",
@@ -182,9 +181,9 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                     enabled = !busy && !o.sending,
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Gap.field)) {
-                    val unsent = view.lines.any { !it.sentToKitchen }
+                    val unsent = lines.any { !it.sentToKitchen }
                     if (unsent) SecondaryButton("Send to kitchen", { vm.send(Ops.sendToKitchen(), "Send to kitchen", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending)
-                    SecondaryButton(if (o.billAsked) "Print bill again" else "Print bill", { vm.send(Ops.printBill(), "Print the bill", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending && view.lines.isNotEmpty())
+                    SecondaryButton(if (o.billAsked) "Print bill again" else "Print bill", { vm.send(Ops.printBill(), "Print the bill", reporter::say) }, Modifier.weight(1f), enabled = !busy && !o.sending && lines.isNotEmpty())
                 }
                 // The waiter asks; somebody at the counter confirms with one key. The money is
                 // still taken at the counter. Asked, the waiter is done here: back to the floor.
@@ -192,7 +191,7 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                     if (o.settleAsked) "Settle asked — ask again" else "Settle bill",
                     { settling = true },
                     Modifier.fillMaxWidth(),
-                    enabled = !busy && !o.sending && view.lines.isNotEmpty(),
+                    enabled = !busy && !o.sending && lines.isNotEmpty(),
                 )
                 VGap(Space.s2)
             }
@@ -214,7 +213,7 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
     }
 
     if (settling && o != null) {
-        Sheet("Settle ₹" + o.total, onDismiss = { settling = false }) {
+        Sheet("Settle " + Money.fromPlain(o.total), onDismiss = { settling = false }) {
             Text("How did they pay? The counter confirms it.", style = Mb.type.body, color = Mb.colors.inkMuted)
             VGap(Gap.field)
             for ((word, mode) in listOf("Cash" to "cash", "Card" to "card", "UPI" to "upi")) {

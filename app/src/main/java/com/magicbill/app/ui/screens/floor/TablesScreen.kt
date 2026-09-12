@@ -1,9 +1,6 @@
 package com.magicbill.app.ui.screens.floor
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,7 +27,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,9 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +45,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.magicbill.app.core.Money
 import com.magicbill.app.counter.Counter
 import com.magicbill.app.counter.Floor
 import com.magicbill.app.counter.Stream
@@ -67,9 +62,10 @@ import com.magicbill.app.ui.kit.Page
 import com.magicbill.app.ui.kit.SecondaryButton
 import com.magicbill.app.ui.kit.Tone
 import com.magicbill.app.ui.kit.VGap
-import com.magicbill.app.ui.kit.launchPoint
 import com.magicbill.app.ui.kit.pressScale
 import com.magicbill.app.ui.kit.pulse
+import com.magicbill.app.ui.kit.tappable
+import com.magicbill.app.ui.theme.Elevation
 import com.magicbill.app.ui.theme.Gap
 import com.magicbill.app.ui.theme.IconSize
 import com.magicbill.app.ui.theme.Mb
@@ -176,7 +172,7 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
                     }
                     items(tables, key = { it.id }) { t ->
                         val order = view.onTable[t.id]
-                        TableCard(t, order, now, thresholds, Modifier.animateItem()) {
+                        TableCard(t, order, now, thresholds) {
                             if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(OrderScreen(order.orderId, orderTitle(order.tableLabel, order.orderType)))
                             else if (order == null) openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
                         }
@@ -194,7 +190,7 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
                             val pending = o.orderId.startsWith(Floor.PENDING_PREFIX)
                             ListRow(
                                 title = o.orderType.replace('_', ' ').replaceFirstChar { it.uppercase() } + (o.token?.let { " · Token $it" } ?: ""),
-                                subtitle = "${Floor.parseLines(o.lines).size} items · ₹" + o.total + (o.by?.let { " · $it" } ?: ""),
+                                subtitle = "${Floor.parseLines(o.lines).size} items · " + Money.fromPlain(o.total) + (o.by?.let { " · $it" } ?: ""),
                                 leading = { IconDisc(Icons.Outlined.Restaurant, tint = Mb.colors.person(o.byId)) },
                                 trailing = {
                                     when {
@@ -240,11 +236,9 @@ fun minutesText(minutes: Int): String =
  *   You ………………… 👥 4
  *   5 items · 8m
  *
- * A taken table says whose it is in the person's colour — the same colour that person has on
- * the counter: a THICK stripe down the LEFT edge and a thin line in the same colour round
- * the other three sides, the way the counter draws it. No dot, no tinted fill: the edge is
- * the signal, the name repeats it in words. Waiting and late live in the timer, amber then
- * bold red. One still on its way to the counter breathes.
+ * A card floats on a soft shadow, no border. A taken table says whose it is in words, in the
+ * person's colour — the same colour that person has on the counter. Waiting and late live in
+ * the timer, amber then bold red. One still on its way to the counter breathes.
  */
 @Composable
 private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresholds: Pair<Int, Int>, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -252,25 +246,19 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
     val shape = RoundedCornerShape(Radius.lg)
     val number = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
     val sending = order != null && (order.sending || order.orderId.startsWith(Floor.PENDING_PREFIX))
-    val person = if (order == null) Color.Transparent else c.person(order.byId)
-    val edge by animateColorAsState(person, label = "tableEdge")
-    val line by animateColorAsState(if (order == null) c.lineSoft else person, label = "tableLine")
+    val person = if (order == null) c.inkMuted else c.person(order.byId)
     val minutes = order?.minutes?.let { it + ((now - order.updatedMs) / 60_000).toInt().coerceAtLeast(0) }
     val (warnAfter, lateAfter) = thresholds
     val late = minutes != null && minutes >= lateAfter
     val waiting = !late && minutes != null && minutes >= warnAfter
     val interaction = remember { MutableInteractionSource() }
-    val stripe = with(LocalDensity.current) { Tile.stripe.toPx() }
     val items = order?.let { Floor.parseLines(it.lines).size } ?: 0
     Column(
-        modifier.aspectRatio(Tile.ratio).pressScale(interaction).clip(shape)
-            .background(c.surface)
-            // The thin line round all four sides; the stripe covers it on the left.
-            .border(Tile.line, line, shape)
-            .drawBehind { if (order != null) drawRect(edge, size = Size(stripe, size.height)) }
-            .launchPoint()
-            .clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
-            .padding(start = Space.s2 + Tile.stripe, end = Space.s2, top = Space.s2, bottom = Space.s2),
+        modifier.aspectRatio(Tile.ratio).pressScale(interaction)
+            .shadow(Elevation.card, shape, ambientColor = c.scrim, spotColor = c.scrim)
+            .background(c.surface, shape)
+            .tappable(onClick, interactionSource = interaction)
+            .padding(Space.s2),
     ) {
         // The section, small, and the chip where the eye lands first.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -288,7 +276,7 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
         Text(number, style = Mb.type.tileNumber, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Box(Modifier.weight(1f))
         if (order != null) {
-            Text("₹" + order.total, style = Mb.type.tileMoney, color = c.ink, maxLines = 1, modifier = Modifier.pulse(sending))
+            Text(Money.fromPlain(order.total), style = Mb.type.tileMoney, color = c.ink, maxLines = 1, modifier = Modifier.pulse(sending))
             // Whose it is on the left, the seats on the right.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(

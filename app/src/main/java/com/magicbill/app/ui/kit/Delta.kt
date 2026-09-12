@@ -14,14 +14,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.magicbill.app.cloud.ReportMath
 import com.magicbill.app.ui.theme.Mb
-import kotlin.math.roundToInt
 
-/** "+12% vs yesterday" pill. Green up, red down, quiet when there is nothing to compare against. */
+/** "+12% vs yesterday" pill. Green up, red down, quiet when there is nothing to compare against. The sum is [ReportMath.change]'s. */
 @Composable
-fun DeltaChip(current: Double, previous: Double?, modifier: Modifier = Modifier, label: String = "vs yesterday") {
+fun DeltaChip(nowPaise: Long, beforePaise: Long?, modifier: Modifier = Modifier, label: String = "vs yesterday") {
     val c = Mb.colors
-    val pct: Int? = if (previous == null || previous <= 0.0) null else (((current - previous) / previous) * 100).roundToInt()
+    val pct: Int? = beforePaise?.let { ReportMath.change(nowPaise, it) }
     val up = (pct ?: 0) >= 0
     val (bg, fg) = when {
         pct == null -> c.raised to c.inkMuted
