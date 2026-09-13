@@ -1,6 +1,7 @@
 package com.magicbill.app.counter
 
 import com.magicbill.app.core.MbJson
+import com.magicbill.app.core.Money
 import com.magicbill.app.core.bool
 import com.magicbill.app.core.int
 import com.magicbill.app.core.long
@@ -131,10 +132,27 @@ object Ops {
     fun requestSettle(payment: String?) = buildJsonObject { put("do", "request_settle"); put("payment", payment?.let { JsonPrimitive(it) } ?: JsonNull) }
 }
 
-/** A line of the order as the counter sees it. The money is the counter's. */
-data class LineView(val line: Int, val name: String, val qty: String, val amount: String, val note: String?, val sentToKitchen: Boolean) {
+/**
+ * A line of the order as the counter sees it. The money is the counter's, and so is the count
+ * of it the kitchen has: [inKitchen] is written like [qty], and [sentToKitchen] is true once
+ * that is all of it.
+ */
+data class LineView(val line: Int, val name: String, val qty: String, val amount: String, val note: String?, val inKitchen: String, val sentToKitchen: Boolean) {
+    /** Some of it has gone out, not all: the line was raised after the kitchen was told. */
+    val partlyInKitchen: Boolean get() = !sentToKitchen && (Money.parseQty(inKitchen) ?: 0L) > 0L
+
+    fun toJson(): JsonObject = buildJsonObject {
+        put("line", line); put("name", name); put("qty", qty); put("amount", amount)
+        put("note", note?.let { JsonPrimitive(it) } ?: JsonNull); put("in_kitchen", inKitchen); put("sent_to_kitchen", sentToKitchen)
+    }
+
     companion object {
-        fun parse(o: JsonObject) = LineView(o.int("line"), o.str("name"), o.str("qty"), o.str("amount"), o.strOrNull("note"), o.bool("sent_to_kitchen"))
+        /** A counter before 1.6.18 sends no count: its flag then means all or nothing. */
+        fun parse(o: JsonObject): LineView {
+            val qty = o.str("qty")
+            val sent = o.bool("sent_to_kitchen")
+            return LineView(o.int("line"), o.str("name"), qty, o.str("amount"), o.strOrNull("note"), o.strOrNull("in_kitchen") ?: if (sent) qty else "0", sent)
+        }
     }
 }
 
@@ -162,7 +180,7 @@ sealed interface Outcome {
         fun toJson(outcome: Outcome): String = when (outcome) {
             is Ok -> buildJsonObject {
                 put("outcome", "ok"); put("order_id", outcome.orderId); put("total", outcome.total)
-                put("lines", JsonArray(outcome.lines.map { l -> buildJsonObject { put("line", l.line); put("name", l.name); put("qty", l.qty); put("amount", l.amount); put("note", l.note?.let { JsonPrimitive(it) } ?: JsonNull); put("sent_to_kitchen", l.sentToKitchen) } }))
+                put("lines", JsonArray(outcome.lines.map { it.toJson() }))
                 put("token", outcome.token?.let { JsonPrimitive(it) } ?: JsonNull); put("note", outcome.note?.let { JsonPrimitive(it) } ?: JsonNull)
             }.toString()
             is Refused -> buildJsonObject { put("outcome", "refused"); put("message", outcome.message) }.toString()

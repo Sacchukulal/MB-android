@@ -85,7 +85,7 @@ class CounterLinkTest {
         assertTrue(s.body.contains("\"do\":\"add_item\""))
         assertTrue("an intent has nowhere to put money", !s.body.contains("price") && !s.body.contains("total"))
 
-        server.once("POST", "/v1/intent", FakeServer.Reply(200, """{"outcome":"ok","order_id":"ord_1","total":"240.00","lines":[{"line":0,"name":"Masala Dosa","qty":"2","amount":"240.00","note":null,"sent_to_kitchen":false}],"token":"7","note":null}"""))
+        server.once("POST", "/v1/intent", FakeServer.Reply(200, """{"outcome":"ok","order_id":"ord_1","total":"240.00","lines":[{"line":0,"name":"Masala Dosa","qty":"2","amount":"240.00","note":null,"in_kitchen":"0","sent_to_kitchen":false}],"token":"7","note":null}"""))
         val ok = (link.intent(cred, Intent("i2", "ord_1", 1L, Ops.sendToKitchen())) as Answer.Ok).value as Outcome.Ok
         assertEquals("240.00", ok.total)
         assertEquals("7", ok.token)

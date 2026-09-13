@@ -155,6 +155,7 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                             when {
                                 o.sending && l.amount.isBlank() -> Badge("Sending", Tone.Info)
                                 l.sentToKitchen -> Badge("In kitchen", Tone.Ok)
+                                l.partlyInKitchen -> Badge("${l.inKitchen} of ${l.qty} in kitchen", Tone.Warn)
                                 else -> Badge("Not sent", Tone.Warn)
                             }
                         }
@@ -203,12 +204,17 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             var qty by remember { mutableStateOf(l.qty) }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("How many", style = Mb.type.body, color = Mb.colors.ink)
-                Stepper(qty, onMinus = { qty = step(qty, -1) }, onPlus = { qty = step(qty, +1) })
+                // What the kitchen already has cannot be stepped away; it is taken off, with a reason.
+                Stepper(qty, onMinus = { qty = step(qty, -1, atLeast = l.inKitchen) }, onPlus = { qty = step(qty, +1) })
             }
             VGap(Gap.group)
             PrimaryButton("Change to $qty", { lineMenu = null; vm.send(Ops.setQty(l.line, qty), "$qty × ${l.name}", reporter::say) }, Modifier.fillMaxWidth(), enabled = qty != l.qty)
-            VGap(Gap.field)
-            SecondaryButton("Take it off the order", { lineMenu = null; reasonFor = "void:${l.line}:${l.name}" }, Modifier.fillMaxWidth())
+            // Taking a dish off is the counter's "void an item" permission, so the button is only
+            // there for a person who holds it.
+            if (vm.may.contains("order.item.void")) {
+                VGap(Gap.field)
+                SecondaryButton("Take it off the order", { lineMenu = null; reasonFor = "void:${l.line}:${l.name}" }, Modifier.fillMaxWidth())
+            }
         }
     }
 
@@ -264,9 +270,10 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
 fun orderTitle(tableLabel: String?, orderType: String?): String =
     tableLabel?.let { "Table $it" } ?: orderType?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Order"
 
-/** "2" → "3"; "0.5" → "1.5"; never below 0.5. */
-internal fun step(qty: String, by: Int): String {
+/** "2" → "3"; "0.5" → "1.5"; never below 0.5, nor below [atLeast] when one is given. */
+internal fun step(qty: String, by: Int, atLeast: String? = null): String {
     val t = Money.parseQty(qty) ?: 1000L
-    val n = (t + by * 1000L).coerceAtLeast(500L)
+    val floor = maxOf(500L, atLeast?.let(Money::parseQty) ?: 0L)
+    val n = (t + by * 1000L).coerceAtLeast(floor)
     return Money.qty(n)
 }

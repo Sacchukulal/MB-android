@@ -93,7 +93,7 @@ class FloorTest {
         assertEquals(2, Floor.parseLines(pending.lines).size)
 
         // The counter answers the whole batch: the real order replaces the staged one.
-        val outcomes = queued.joinToString(",") { q -> "[\"${q.id}\",{\"outcome\":\"ok\",\"order_id\":\"ord_9\",\"total\":\"94.50\",\"lines\":[{\"line\":0,\"name\":\"Idli\",\"qty\":\"2\",\"amount\":\"80.00\",\"note\":null,\"sent_to_kitchen\":true}],\"token\":\"7\",\"note\":${if (q === queued.last()) "\"2 items sent to the kitchen.\"" else "null"}}]" }
+        val outcomes = queued.joinToString(",") { q -> "[\"${q.id}\",{\"outcome\":\"ok\",\"order_id\":\"ord_9\",\"total\":\"94.50\",\"lines\":[{\"line\":0,\"name\":\"Idli\",\"qty\":\"2\",\"amount\":\"80.00\",\"note\":null,\"in_kitchen\":\"2\",\"sent_to_kitchen\":true}],\"token\":\"7\",\"note\":${if (q === queued.last()) "\"2 items sent to the kitchen.\"" else "null"}}]" }
         server.once("POST", "/v1/batch", FakeServer.Reply(200, """{"outcomes":[$outcomes],"says":"2 items sent to the kitchen."}"""))
         floor.flush()
         val open = db.floor().openOrders().first()
@@ -155,7 +155,7 @@ class FloorTest {
     @Test fun the_floor_push_updates_tables_adopts_every_order_and_closes_what_is_gone() = runTest {
         db.floor().putOrder(row("ord_1", "t1", "1", "0.00", "4"))
         db.floor().putOrder(row("ord_2", "t2", "2", "50.00", "5"))
-        val body = com.magicbill.app.core.parseJsonOrNull("""{"tables":[{"id":"t1","state":"bill_asked","order_id":"ord_1"},{"id":"t2","state":"free","order_id":null}],"orders":[{"order_id":"ord_1","table_id":"t1","table_label":"1","order_type":"dine_in","total":"240.00","token":"4","note":null,"bill_asked":true,"by":"Ravi","by_id":"stf_1","lines":[{"line":0,"name":"Masala Dosa","qty":"2","amount":"240.00","note":null,"sent_to_kitchen":true}]},{"order_id":"ord_77","table_id":null,"table_label":null,"order_type":"parcel","total":"10.00","token":"7","note":null,"bill_asked":false,"by":"Anita","by_id":"stf_2","lines":[]}]}""") as JsonObject
+        val body = com.magicbill.app.core.parseJsonOrNull("""{"tables":[{"id":"t1","state":"bill_asked","order_id":"ord_1"},{"id":"t2","state":"free","order_id":null}],"orders":[{"order_id":"ord_1","table_id":"t1","table_label":"1","order_type":"dine_in","total":"240.00","token":"4","note":null,"bill_asked":true,"by":"Ravi","by_id":"stf_1","lines":[{"line":0,"name":"Masala Dosa","qty":"2","amount":"240.00","note":null,"in_kitchen":"2","sent_to_kitchen":true}]},{"order_id":"ord_77","table_id":null,"table_label":null,"order_type":"parcel","total":"10.00","token":"7","note":null,"bill_asked":false,"by":"Anita","by_id":"stf_2","lines":[]}]}""") as JsonObject
         floor.takeFloor(body)
         val tables = db.floor().tables().first()
         assertEquals("bill_asked", tables.first { it.id == "t1" }.state)

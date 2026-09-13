@@ -31,11 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -184,7 +180,7 @@ class Floor @Inject constructor(
         }
         // The floor shows it NOW: a new order as a sending tile, an addition as sending lines
         // on the order it belongs to. The counter's answer replaces both.
-        val pendingLines = lines.mapIndexed { i, l -> LineView(i, l.name, l.qty, "", l.note, false) }
+        val pendingLines = lines.mapIndexed { i, l -> LineView(i, l.name, l.qty, "", l.note, "0", false) }
         val pending = if (orderId == null) {
             FloorOrderRow(
                 orderId = PENDING_PREFIX + batchId, tableId = place.tableId, tableLabel = place.tableLabel, orderType = place.orderType,
@@ -368,12 +364,7 @@ class Floor @Inject constructor(
         /** A staged order's id until the counter names it. */
         const val PENDING_PREFIX = "pending_"
 
-        fun linesJson(lines: List<LineView>): String = JsonArray(lines.map { l ->
-            buildJsonObject {
-                put("line", l.line); put("name", l.name); put("qty", l.qty); put("amount", l.amount)
-                put("note", l.note?.let { JsonPrimitive(it) } ?: JsonNull); put("sent_to_kitchen", l.sentToKitchen)
-            }
-        }).toString()
+        fun linesJson(lines: List<LineView>): String = JsonArray(lines.map { it.toJson() }).toString()
 
         fun parseLines(text: String): List<LineView> = try {
             (MbJson.parseToJsonElement(text)).objects().map(LineView::parse)
