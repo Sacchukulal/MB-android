@@ -85,6 +85,12 @@ android {
     }
 }
 
+// Room writes each database version's schema to schemas/<version>.json (committed), so a
+// migration is written against the exact SQL Room expects and can be tested against it.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)

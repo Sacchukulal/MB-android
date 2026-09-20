@@ -134,6 +134,17 @@ interface CursorDao {
 }
 
 @Dao
+interface ArchiveDao {
+    @Query("SELECT * FROM archive_days WHERE restaurantId = :r AND businessDay = :day")
+    suspend fun get(r: String, day: String): ArchiveDayRow?
+
+    @Query("SELECT * FROM archive_days WHERE restaurantId = :r ORDER BY businessDay DESC")
+    suspend fun list(r: String): List<ArchiveDayRow>
+
+    @Upsert suspend fun upsert(row: ArchiveDayRow)
+}
+
+@Dao
 interface IntentDao {
     @Upsert suspend fun put(row: IntentRow)
 

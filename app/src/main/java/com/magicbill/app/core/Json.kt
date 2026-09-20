@@ -47,6 +47,10 @@ fun JsonObject.arr(key: String): JsonArray = (this[key] as? JsonArray) ?: JsonAr
 /** The raw JSON text of a nested value, kept as-is for a detail screen to parse later. */
 fun JsonObject.raw(key: String): String = this[key]?.takeIf { it !is JsonNull }?.toString() ?: "null"
 fun JsonObject.strings(key: String): List<String> = arr(key).mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+/** An instant column, ISO text or integer milliseconds ([Ist.parseTs]). Null when absent or unreadable. */
+fun JsonObject.tsOf(key: String): Long? = Ist.parseTs(strOrNull(key))
+/** A business-day column, ISO text or integer days ([Ist.parseDay]), as the phone's "yyyy-mm-dd". Blank when absent or unreadable. */
+fun JsonObject.dayOf(key: String): String = Ist.parseDay(strOrNull(key))?.let(Ist::key) ?: ""
 
 fun JsonElement.asObjectOrNull(): JsonObject? = this as? JsonObject
 fun JsonElement.asArrayOrEmpty(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())

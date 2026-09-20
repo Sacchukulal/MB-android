@@ -126,6 +126,9 @@ class RootViewModel @Inject constructor(
                 bootedFlow.value = true
             }
             refreshWho()
+            // Once per start, with the start-up pull: answered intents older than a week and
+            // closed floor orders older than a day are pruned. Never on a timer.
+            floor.housekeeping()
             // A phone that is somebody's looks at the shelf once per start. Never over the login flow.
             if (account.session.value != null || counter.isPaired) updater.checkQuietly()
         }

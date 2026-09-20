@@ -18,15 +18,32 @@ object Ist {
 
     fun key(d: LocalDate): String = d.toString()
 
+    /**
+     * A business day as either side writes it: the cloud's "2026-08-27" (a timestamp's date
+     * part will do) or the counter's integer days since 1970-01-01. Null when it is neither.
+     * The ONE place a day is parsed.
+     */
     fun parseDay(s: String?): LocalDate? = try {
-        if (s.isNullOrBlank()) null else LocalDate.parse(s.take(10))
+        when {
+            s.isNullOrBlank() -> null
+            s.isWholeNumber() -> LocalDate.ofEpochDay(s.toLong())
+            else -> LocalDate.parse(s.take(10))
+        }
     } catch (e: Exception) {
         null
     }
 
-    /** "2026-08-27T15:39:59.09+00:00" → ms. Null when it is not a timestamp. */
+    /**
+     * An instant as either side writes it: the cloud's "2026-08-27T15:39:59.09+00:00" (or the
+     * same without a zone, taken as UTC) or the counter's integer milliseconds. Null when it is
+     * neither. The ONE place an instant is parsed.
+     */
     fun parseTs(s: String?): Long? = try {
-        if (s.isNullOrBlank()) null else java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
+        when {
+            s.isNullOrBlank() -> null
+            s.isWholeNumber() -> s.toLong()
+            else -> java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
+        }
     } catch (e: Exception) {
         try {
             java.time.LocalDateTime.parse(s!!.replace(' ', 'T')).atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
@@ -34,6 +51,8 @@ object Ist {
             null
         }
     }
+
+    private fun String.isWholeNumber(): Boolean = removePrefix("-").let { it.isNotEmpty() && it.all(Char::isDigit) }
 
     private val clock12: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a")
     private val dayMonth: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")

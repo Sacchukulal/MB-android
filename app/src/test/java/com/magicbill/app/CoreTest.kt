@@ -3,6 +3,9 @@ package com.magicbill.app
 import com.magicbill.app.core.Argon
 import com.magicbill.app.core.Ist
 import com.magicbill.app.core.Money
+import com.magicbill.app.core.dayOf
+import com.magicbill.app.core.tsOf
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -79,6 +82,27 @@ class IstTest {
         assertEquals(java.time.Instant.parse("2026-08-27T15:39:59.090Z").toEpochMilli(), Ist.parseTs("2026-08-27T15:39:59.09+00:00"))
         assertNull(Ist.parseTs(null))
         assertNull(Ist.parseTs("soon"))
+    }
+
+    /** The counter writes instants as ms and days as days since 1970-01-01; the one parser reads both forms. */
+    @Test fun timestamps_and_days_from_the_counter() {
+        assertEquals(1787809200000L, Ist.parseTs("1787809200000"))
+        assertEquals(LocalDate.of(2026, 8, 27), Ist.parseDay("20692"))
+        assertEquals(LocalDate.of(2026, 8, 27), Ist.parseDay("2026-08-27"))
+        assertEquals(LocalDate.of(2026, 8, 27), Ist.parseDay("2026-08-27T18:00:00+00:00"))
+        assertNull(Ist.parseDay("someday"))
+        val o = kotlinx.serialization.json.buildJsonObject {
+            put("business_day", 20692)
+            put("created_at", 1787809200000L)
+            put("at", "2026-08-27T05:40:00+00:00")
+            put("iso_day", "2026-08-27")
+        }
+        assertEquals("2026-08-27", o.dayOf("business_day"))
+        assertEquals("2026-08-27", o.dayOf("iso_day"))
+        assertEquals("", o.dayOf("missing"))
+        assertEquals(1787809200000L, o.tsOf("created_at"))
+        assertEquals(1787809200000L, o.tsOf("at"))
+        assertNull(o.tsOf("missing"))
     }
 }
 

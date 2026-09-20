@@ -16,7 +16,8 @@ import java.io.IOException
  */
 class FakeServer : Interceptor {
     data class Sent(val method: String, val path: String, val body: String, val headers: Map<String, String>)
-    data class Reply(val code: Int, val body: String = "", val headers: Map<String, String> = emptyMap())
+    /** JSON text, or — a file such as a day file — raw [bytes], which win over [body]. */
+    data class Reply(val code: Int, val body: String = "", val headers: Map<String, String> = emptyMap(), val bytes: ByteArray? = null)
 
     private val script = ArrayDeque<(Sent) -> Reply?>()
     val sent = ArrayList<Sent>()
@@ -37,7 +38,7 @@ class FakeServer : Interceptor {
         val s = record(req)
         val reply = firstMatch(s) ?: throw IOException("no scripted reply for ${s.method} ${s.path}")
         val builder = Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(reply.code).message("")
-            .body(reply.body.toResponseBody("application/json".toMediaType()))
+            .body(reply.bytes?.toResponseBody("application/gzip".toMediaType()) ?: reply.body.toResponseBody("application/json".toMediaType()))
         reply.headers.forEach { (k, v) -> builder.header(k, v) }
         return builder.build()
     }

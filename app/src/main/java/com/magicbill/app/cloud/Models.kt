@@ -182,3 +182,11 @@ data class Release(val version: String, val notes: String, val url: String, val 
         }
     }
 }
+
+/**
+ * One entry of a Storage listing, named relative to the folder listed. A sub-folder has no
+ * [updatedAt] and no [size]; a file has both.
+ */
+data class StorageObject(val name: String, val updatedAt: String?, val size: Long?) {
+    val isFolder: Boolean get() = updatedAt == null
+}

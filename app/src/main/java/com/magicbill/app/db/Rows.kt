@@ -220,6 +220,22 @@ data class NoticeReadRow(@androidx.room.PrimaryKey val id: String, val readAtMs:
 data class CursorRow(val restaurantId: String, val tbl: String, val cursor: String, val pulledAtMs: Long)
 
 /**
+ * A day file (`{restaurant}/{yyyy}/{yyyy-mm-dd}.jsonl.gz` in the `bill-archives` bucket) this
+ * phone has imported. [objectUpdatedAt] is the Storage listing's `updated_at` as given; a day
+ * whose value moved was re-uploaded and is imported again.
+ */
+@Entity(tableName = "archive_days", primaryKeys = ["restaurantId", "businessDay"])
+data class ArchiveDayRow(
+    val restaurantId: String,
+    /** "yyyy-mm-dd", like every other business day on the phone. */
+    val businessDay: String,
+    val objectUpdatedAt: String,
+    /** Bill lines the file carried. */
+    val bills: Int,
+    val importedAtMs: Long,
+)
+
+/**
  * An intent for the counter, durable from before its first send. The id is generated once and
  * kept across restarts — an id regenerated on retry is a duplicate order (LAN_PROTOCOL.md §6).
  */

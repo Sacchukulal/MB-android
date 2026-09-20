@@ -3,10 +3,10 @@ package com.magicbill.app.cloud
 import androidx.room.withTransaction
 import com.magicbill.app.core.Answer
 import com.magicbill.app.core.Clock
-import com.magicbill.app.core.Ist
 import com.magicbill.app.core.arr
 import com.magicbill.app.core.asObjectOrNull
 import com.magicbill.app.core.bool
+import com.magicbill.app.core.dayOf
 import com.magicbill.app.core.int
 import com.magicbill.app.core.intOrNull
 import com.magicbill.app.core.long
@@ -16,6 +16,7 @@ import com.magicbill.app.core.objects
 import com.magicbill.app.core.raw
 import com.magicbill.app.core.str
 import com.magicbill.app.core.strOrNull
+import com.magicbill.app.core.tsOf
 import com.magicbill.app.db.BillRow
 import com.magicbill.app.db.CashMovementRow
 import com.magicbill.app.db.CursorRow
@@ -66,11 +67,16 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
         Table("notices", null) { _, rows -> db.notices().upsert(rows.map { notice(it) }) },
     )
 
+    /** The day files (the bill history beyond the cloud's window), written through the same [tables]. */
+    val archive = Archive(cloud, db, clock, tables)
+
     data class Report(
         val pulled: Map<String, Int>,
         val skipped: List<String>,
         /** Null when every table the caller may see came down. */
         val trouble: Answer<Nothing>?,
+        /** Day files imported this pull (at most [Archive.FILES_PER_PULL]; the next pull continues). */
+        val archived: Int = 0,
     ) {
         val rows: Int get() = pulled.values.sum()
         val ok: Boolean get() = trouble == null
@@ -79,6 +85,8 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
     /**
      * Pulls the tables `permissions` opens (owners hold every phone permission). `only` narrows
      * it to the tables a screen is about, so opening Khata does not wait for a month of bills.
+     * When `bills` came down, the day files follow: the history the cloud's window no longer
+     * holds, newest first, a bounded batch per pull.
      */
     suspend fun pull(restaurantId: String, permissions: Set<String>, only: Set<String>? = null, pageSize: Int = 500): Report {
         val pulled = LinkedHashMap<String, Int>()
@@ -94,7 +102,16 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
                 is Answer.SignedOut -> { trouble = r; break }
             }
         }
-        return Report(pulled, skipped, trouble)
+        var archived = 0
+        if (trouble == null && "bills" in pulled) {
+            when (val a = archive.pull(restaurantId)) {
+                is Answer.Ok -> archived = a.value
+                is Answer.Refused -> trouble = a
+                is Answer.Unreachable -> trouble = a
+                is Answer.SignedOut -> trouble = a
+            }
+        }
+        return Report(pulled, skipped, trouble, archived)
     }
 
     /** One table, all its pages. Answers how many rows came down. */
@@ -129,23 +146,22 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
 
     // ---- The cloud's columns → the phone's rows ---------------------------------------------
 
-    private fun ts(o: JsonObject, key: String): Long? = Ist.parseTs(o.strOrNull(key))
     private fun deleted(o: JsonObject) = o.strOrNull("deleted_at") != null
-    private fun updated(o: JsonObject) = o.longOrNull("updated_ms") ?: ts(o, "updated_at") ?: 0L
+    private fun updated(o: JsonObject) = o.longOrNull("updated_ms") ?: o.tsOf("updated_at") ?: 0L
 
     private fun dayTotal(r: String, o: JsonObject) = DayTotalRow(
-        r, o.str("business_day"), o.int("bills"), o.int("voids"), o.long("gross_paise"), o.long("discount_paise"), o.long("tax_paise"),
+        r, o.dayOf("business_day"), o.int("bills"), o.int("voids"), o.long("gross_paise"), o.long("discount_paise"), o.long("tax_paise"),
         o.long("charges_paise"), o.long("net_paise"), o.raw("by_payment"), o.long("expenses_paise"), o.long("credit_given_paise"),
         o.long("credit_collected_paise"), o.bool("is_day_closed"), updated(o),
     )
 
-    private fun dayItem(r: String, o: JsonObject) = DayItemTotalRow(r, o.str("business_day"), o.str("item_id"), o.str("item_name"), o.strOrNull("category_id"), o.long("qty_thousandths"), o.long("sales_paise"), updated(o))
+    private fun dayItem(r: String, o: JsonObject) = DayItemTotalRow(r, o.dayOf("business_day"), o.str("item_id"), o.str("item_name"), o.strOrNull("category_id"), o.long("qty_thousandths"), o.long("sales_paise"), updated(o))
 
-    private fun dayCategory(r: String, o: JsonObject) = DayCategoryTotalRow(r, o.str("business_day"), o.str("category_id"), o.str("category_name"), o.long("qty_thousandths"), o.long("sales_paise"), updated(o))
+    private fun dayCategory(r: String, o: JsonObject) = DayCategoryTotalRow(r, o.dayOf("business_day"), o.str("category_id"), o.str("category_name"), o.long("qty_thousandths"), o.long("sales_paise"), updated(o))
 
     private fun bill(r: String, o: JsonObject) = BillRow(
         restaurantId = r, id = o.str("id"), terminalId = o.str("terminal_id"), billNumber = o.str("bill_number"), tokenNumber = o.intOrNull("token_number"),
-        businessDay = o.str("business_day"), createdAtMs = ts(o, "created_at") ?: 0L, settledAtMs = ts(o, "settled_at"),
+        businessDay = o.dayOf("business_day"), createdAtMs = o.tsOf("created_at") ?: 0L, settledAtMs = o.tsOf("settled_at"),
         orderType = o.str("order_type"), placement = o.str("placement"), tableName = o.strOrNull("table_name"), customerId = o.strOrNull("customer_id"),
         customerName = o.strOrNull("customer_name"), staffId = o.strOrNull("staff_id"), staffName = o.strOrNull("staff_name"), status = o.str("status"),
         subtotalPaise = o.long("subtotal_paise"), discountPaise = o.long("discount_paise"), taxPaise = o.long("tax_paise"), chargesPaise = o.long("charges_paise"),
@@ -155,13 +171,13 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
 
     private fun expenseCategory(r: String, o: JsonObject) = ExpenseCategoryRow(r, o.str("id"), o.str("name"), o.int("sort_order"), updated(o), deleted(o))
 
-    private fun expense(r: String, o: JsonObject) = ExpenseRow(r, o.str("id"), o.strOrNull("category_id"), o.str("category_name"), o.long("amount_paise"), o.str("note"), o.str("business_day"), o.strOrNull("paid_by_staff_id"), ts(o, "created_at") ?: 0L, updated(o), deleted(o))
+    private fun expense(r: String, o: JsonObject) = ExpenseRow(r, o.str("id"), o.strOrNull("category_id"), o.str("category_name"), o.long("amount_paise"), o.str("note"), o.dayOf("business_day"), o.strOrNull("paid_by_staff_id"), o.tsOf("created_at") ?: 0L, updated(o), deleted(o))
 
-    private fun cash(r: String, o: JsonObject) = CashMovementRow(r, o.str("id"), o.str("kind"), o.long("amount_paise"), o.str("business_day"), o.str("note"), o.strOrNull("staff_id"), ts(o, "created_at") ?: 0L, updated(o), deleted(o))
+    private fun cash(r: String, o: JsonObject) = CashMovementRow(r, o.str("id"), o.str("kind"), o.long("amount_paise"), o.dayOf("business_day"), o.str("note"), o.strOrNull("staff_id"), o.tsOf("created_at") ?: 0L, updated(o), deleted(o))
 
     private fun customer(r: String, o: JsonObject) = CustomerRow(r, o.str("id"), o.str("name"), o.strOrNull("phone"), o.strOrNull("address"), o.long("balance_paise"), o.longOrNull("credit_limit_paise"), o.bool("is_active"), updated(o), deleted(o))
 
-    private fun ledger(r: String, o: JsonObject) = LedgerRow(r, o.str("id"), o.str("customer_id"), o.str("kind"), o.strOrNull("bill_id"), o.long("amount_paise"), o.str("business_day"), ts(o, "at") ?: 0L, o.str("note"), updated(o))
+    private fun ledger(r: String, o: JsonObject) = LedgerRow(r, o.str("id"), o.str("customer_id"), o.str("kind"), o.strOrNull("bill_id"), o.long("amount_paise"), o.dayOf("business_day"), o.tsOf("at") ?: 0L, o.str("note"), updated(o))
 
     private fun role(r: String, o: JsonObject) = RoleRow(r, o.str("id"), o.str("name"), o.bool("is_builtin"), o.intOrNull("max_discount_bp"), o.longOrNull("max_discount_paise"), o.raw("permissions").let { if (it == "null") "[]" else it }, updated(o), deleted(o))
 
@@ -175,5 +191,5 @@ class Mirror(private val cloud: CloudLink, private val db: MbDatabase, private v
 
     private fun menuItem(r: String, o: JsonObject) = MenuItemRow(r, o.str("id"), o.strOrNull("category_id"), o.str("name"), o.long("unit_price_paise"), o.int("tax_rate_bp"), o.strOrNull("short_code"), o.bool("is_available"), o.int("sort_order"), updated(o), deleted(o))
 
-    private fun notice(o: JsonObject) = NoticeRow(o.str("id"), o.strOrNull("restaurant_id"), o.str("target"), o.str("title"), o.str("body"), ts(o, "starts_at") ?: 0L, ts(o, "ends_at"), updated(o), deleted(o))
+    private fun notice(o: JsonObject) = NoticeRow(o.str("id"), o.strOrNull("restaurant_id"), o.str("target"), o.str("title"), o.str("body"), o.tsOf("starts_at") ?: 0L, o.tsOf("ends_at"), updated(o), deleted(o))
 }

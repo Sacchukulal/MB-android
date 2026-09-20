@@ -6,7 +6,10 @@ import com.magicbill.app.core.MbJson
 import com.magicbill.app.core.Sentences
 import com.magicbill.app.core.asObjectOrNull
 import com.magicbill.app.core.long
+import com.magicbill.app.core.longOrNull
+import com.magicbill.app.core.map
 import com.magicbill.app.core.obj
+import com.magicbill.app.core.objects
 import com.magicbill.app.core.parseJsonOrNull
 import com.magicbill.app.core.str
 import com.magicbill.app.core.strOrNull
@@ -128,25 +131,63 @@ class CloudLink(
     /** `POST /rest/v1/rpc/<fn>`. */
     suspend fun rpc(fn: String, body: JsonObject = JsonObject(emptyMap())): Answer<JsonElement> = authed { token ->
         signed("$baseUrl/rest/v1/rpc/$fn", token).post(body.toString().toRequestBody(jsonType)).build()
-    }
+    }.map(::json)
 
     /** `GET /rest/v1/<path>` — a select with PostgREST filters in the path. */
     suspend fun select(path: String): Answer<JsonElement> = authed { token ->
         signed("$baseUrl/rest/v1/$path", token).get().build()
-    }
+    }.map(::json)
 
     /** `POST /rest/v1/<table>` — an insert; the row is not returned. */
     suspend fun insert(table: String, row: JsonObject): Answer<JsonElement> = authed { token ->
         signed("$baseUrl/rest/v1/$table", token).header("Prefer", "return=minimal").post(row.toString().toRequestBody(jsonType)).build()
-    }
+    }.map(::json)
 
     /** Anonymous reads: plans, releases, permissions. */
-    suspend fun selectAnon(path: String): Answer<JsonElement> = when (val wire = send(anonRequest("$baseUrl/rest/v1/$path").get().build())) {
-        is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-        is Wire.Http -> fromRest(wire)
+    suspend fun selectAnon(path: String): Answer<JsonElement> = answer(send(anonRequest("$baseUrl/rest/v1/$path").get().build())).map(::json)
+
+    // ---- Storage: the day files, under the same login ------------------------------------------
+
+    /**
+     * `POST /storage/v1/object/list/<bucket>` — what sits directly under [prefix] (a folder
+     * path ending in "/"): files with their `updated_at`, and sub-folders with none. Every
+     * page, by name ascending; nothing metered, RLS is the wall.
+     */
+    suspend fun listObjects(bucket: String, prefix: String): Answer<List<StorageObject>> {
+        val all = ArrayList<StorageObject>()
+        while (true) {
+            val body = buildJsonObject {
+                put("prefix", prefix)
+                put("limit", LIST_PAGE)
+                put("offset", all.size)
+                put("sortBy", buildJsonObject { put("column", "name"); put("order", "asc") })
+            }
+            val page = when (val a = authed { token -> signed("$baseUrl/storage/v1/object/list/$bucket", token).post(body.toString().toRequestBody(jsonType)).build() }.map(::json)) {
+                is Answer.Ok -> a.value.objects().map { StorageObject(it.str("name"), it.strOrNull("updated_at"), it.obj("metadata")?.longOrNull("size")) }
+                is Answer.Refused -> return a
+                is Answer.Unreachable -> return a
+                is Answer.SignedOut -> return a
+            }
+            all.addAll(page)
+            if (page.size < LIST_PAGE) return Answer.Ok(all)
+        }
     }
 
-    private suspend fun authed(build: (token: String) -> Request): Answer<JsonElement> {
+    /**
+     * `GET /storage/v1/object/authenticated/<bucket>/<key>` — the object's bytes as they
+     * arrive, never read into memory here. The caller closes the stream; the client's
+     * deadlines still bound the whole read.
+     */
+    suspend fun getObjectStream(bucket: String, key: String): Answer<java.io.InputStream> =
+        authed(streaming = true) { token -> signed("$baseUrl/storage/v1/object/authenticated/$bucket/$key", token).get().build() }
+            .map { checkNotNull(it.stream) }
+
+    /**
+     * The one signed-in path: refresh before the token expires, one refresh and one retry on
+     * a 401, then the reply as an [Answer] ([answer]). With [streaming] a 2xx body is left
+     * open for the caller ([Wire.Http.stream]); every other reply is read to text.
+     */
+    private suspend fun authed(streaming: Boolean = false, build: (token: String) -> Request): Answer<Wire.Http> {
         val s = sessions.current() ?: return Answer.SignedOut(Sentences.NOT_SIGNED_IN)
         var token = s.accessToken
         if (s.expiresAtMs - clock.now() < 60_000) {
@@ -156,21 +197,15 @@ class CloudLink(
                 else -> {} // try with what we have; the 401 path below refreshes again
             }
         }
-        val first = send(build(token))
-        if (first is Wire.Http && first.code == 401) {
-            return when (val r = refresh(token)) {
-                is Answer.Ok -> when (val second = send(build(r.value.accessToken))) {
-                    is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-                    is Wire.Http -> if (second.code == 401) Answer.SignedOut(Sentences.SIGN_IN_ENDED) else fromRest(second)
-                }
-                is Answer.SignedOut -> r
-                else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+        var wire = send(build(token), streaming)
+        if (wire is Wire.Http && wire.code == 401) {
+            wire = when (val r = refresh(token)) {
+                is Answer.Ok -> send(build(r.value.accessToken), streaming)
+                is Answer.SignedOut -> return r
+                else -> return Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
             }
         }
-        return when (first) {
-            is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
-            is Wire.Http -> fromRest(first)
-        }
+        return answer(wire)
     }
 
     /**
@@ -212,18 +247,24 @@ class CloudLink(
         anonRequest(url).header("Authorization", "Bearer $token")
 
     private sealed interface Wire {
-        data class Http(val code: Int, val body: String, val retryAfter: Int?) : Wire
+        /** A reply: its text, or — a streamed 2xx — the body left open in [stream] and [body] empty. */
+        data class Http(val code: Int, val body: String, val retryAfter: Int?, val stream: java.io.InputStream? = null) : Wire
         data class Failed(val why: Exception) : Wire
     }
 
-    private suspend fun send(request: Request): Wire = withContext(io) {
+    /**
+     * The one exchange: the call under the client's deadlines, the log line, the reply. With
+     * [streaming] a 2xx body is handed on unread (closing the stream closes the call); every
+     * other body is read to text and closed here.
+     */
+    private suspend fun send(request: Request, streaming: Boolean = false): Wire = withContext(io) {
         try {
-            client.newCall(request).execute().use { r ->
-                val body = r.body.string()
-                // A failed call is logged by status and path — never its body, which may carry a token.
-                if (r.code !in 200..299) android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} → ${r.code}")
-                Wire.Http(r.code, body, r.header("Retry-After")?.trim()?.toIntOrNull())
-            }
+            val r = client.newCall(request).execute()
+            // A failed call is logged by status and path — never its body, which may carry a token.
+            if (r.code !in 200..299) android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} → ${r.code}")
+            val retryAfter = r.header("Retry-After")?.trim()?.toIntOrNull()
+            if (streaming && r.code in 200..299) Wire.Http(r.code, "", retryAfter, r.body.byteStream())
+            else r.use { Wire.Http(r.code, it.body.string(), retryAfter) }
         } catch (e: IOException) {
             android.util.Log.w(TAG, "${request.method} ${request.url.encodedPath} failed: ${e.javaClass.simpleName}: ${e.message}")
             Wire.Failed(e)
@@ -233,20 +274,26 @@ class CloudLink(
         }
     }
 
-    /** PostgREST: 2xx is data; 4xx carries `{code, message}` written for a person. */
-    private fun fromRest(wire: Wire.Http): Answer<JsonElement> {
-        val parsed = parseJsonOrNull(wire.body)
-        return when {
-            wire.code in 200..299 -> Answer.Ok(parsed ?: JsonNull)
+    /**
+     * A reply as an [Answer]: 2xx is the reply itself; a 4xx from PostgREST or Storage carries
+     * `{code, message}` (Storage: `{statusCode, error, message}`) written for a person.
+     */
+    private fun answer(wire: Wire): Answer<Wire.Http> = when (wire) {
+        is Wire.Failed -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
+        is Wire.Http -> when {
+            wire.code in 200..299 -> Answer.Ok(wire)
             wire.code == 401 -> Answer.SignedOut(Sentences.SIGN_IN_ENDED)
             wire.code == 429 -> Answer.Refused(tooManySentence(wire.retryAfter), "too_many", wire.retryAfter)
             wire.code in 400..499 -> {
-                val o = parsed?.asObjectOrNull()
+                val o = parseJsonOrNull(wire.body)?.asObjectOrNull()
                 Answer.Refused(o?.strOrNull("message")?.takeIf { it.isNotBlank() } ?: "Magic Bill did not accept that.", o?.strOrNull("code"), null)
             }
             else -> Answer.Unreachable(Sentences.CLOUD_UNREACHABLE)
         }
     }
+
+    /** A 2xx reply's JSON; [JsonNull] when the body is empty or not JSON. */
+    private fun json(wire: Wire.Http): JsonElement = parseJsonOrNull(wire.body) ?: JsonNull
 
     private fun sessionFrom(o: JsonObject, kind: CloudSession.Kind, email: String? = null, staff: StaffIdentity? = null, deviceId: String? = null): CloudSession {
         val expiresAt = o.long("expires_at").takeIf { it > 0 }?.times(1000)
@@ -287,6 +334,8 @@ class CloudLink(
         const val SITE_URL = "https://www.magicbill.in"
         /** Where a signed-in owner with no shop yet picks a plan. Opened in the phone's browser. */
         const val PLAN_PAGE = "$SITE_URL/dashboard"
+        /** A Storage listing's page; a listing shorter than this is the last page. */
+        const val LIST_PAGE = 1000
 
         private val DEAD_TOKEN_CODES = setOf(
             "invalid_grant", "refresh_token_not_found", "refresh_token_already_used",
