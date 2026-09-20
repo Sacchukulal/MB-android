@@ -1,8 +1,7 @@
 # MB-android (Kotlin + Jetpack Compose) — 3.x, rebuilt 2026-08-28
 
 The phone is a screen. The cloud (`MB-backend/docs/PHONE_API.md`) is the owner's window; the
-counter over the shop's WiFi (`MB-pos/docs/LAN_PROTOCOL.md`) is the floor. The plan and the
-decisions are in `../docs/ANDROID_ROUND.md`.
+counter over the shop's WiFi (`MB-pos/docs/LAN_PROTOCOL.md`) is the floor. The rules are in `../docs/RULES.md`; open problems in `../docs/OPEN_ISSUES.md`.
 
 ## Commands
 
