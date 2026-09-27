@@ -81,8 +81,8 @@ class HygieneTest {
         val archive = entities.single { it["tableName"]!!.jsonPrimitive.content == "archive_days" }
         val sql = archive["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", "archive_days")
         assertEquals(sql, com.magicbill.app.db.MbDatabase.ARCHIVE_DAYS_SQL)
-        assertEquals(listOf(3 to 4, 4 to 5), com.magicbill.app.db.MbDatabase.MIGRATIONS.map { it.startVersion to it.endVersion })
+        assertEquals(listOf(3 to 4, 4 to 5, 5 to 6), com.magicbill.app.db.MbDatabase.MIGRATIONS.map { it.startVersion to it.endVersion })
         val builder = File(root, "db/MbDatabase.kt").readText()
-        assertTrue("a wipe from version 4 on", !builder.contains("fallbackToDestructiveMigration(") && builder.contains("fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3)"))
+        assertTrue("a wipe from version 3 on", !builder.contains("fallbackToDestructiveMigration(") && builder.contains("fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2)"))
     }
 }

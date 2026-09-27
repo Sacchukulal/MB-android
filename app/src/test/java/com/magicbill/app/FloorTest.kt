@@ -79,6 +79,71 @@ class FloorTest {
         assertTrue(db.intents().queued().isEmpty())
     }
 
+    @Test fun partial_cancellations_are_offered_only_when_the_counter_supports_them() = runTest {
+        assertFalse(floor.supportsPartialCancellation.value)
+        floor.takeFloor(com.magicbill.app.core.parseJsonOrNull("""{"partial_item_cancellation":true,"orders":[]}""") as JsonObject)
+        assertTrue(floor.supportsPartialCancellation.value)
+        floor.takeFloor(com.magicbill.app.core.parseJsonOrNull("""{"orders":[]}""") as JsonObject)
+        assertFalse(floor.supportsPartialCancellation.value)
+    }
+
+    @Test fun an_offline_partial_cancellation_retries_the_same_snapshot_and_intent() = runTest {
+        val line = com.magicbill.app.counter.LineView(0, "Dosa", "2", "240.00", null, "2", true)
+        db.floor().putOrder(row("reduce_order", "t1", "1", "252.00", "4").copy(lines = Floor.linesJson(listOf(line))))
+        server.fail("/v1/intent")
+        val request = Ops.reduceQty(line, "1", "Customer changed mind")
+        val result = floor.submit(request, "reduce_order", "Reduce Dosa to 1", Floor.Place("t1", "1", "dine_in"))
+        assertTrue(result is Answer.Unreachable)
+        val queued = db.intents().queued().single()
+        assertEquals(request.toString(), queued.what)
+        assertEquals("252.00", db.floor().order("reduce_order")!!.total)
+        server.once("POST", "/v1/batch", FakeServer.Reply(200, """{"outcomes":[["${queued.id}",{"outcome":"ok","order_id":"reduce_order","total":"126.00","lines":[{"line":0,"name":"Dosa","qty":"1","amount":"120.00","note":null,"in_kitchen":"1","sent_to_kitchen":true}],"token":"4","note":"Reduced"}]],"says":"Reduced"}"""))
+        floor.flush()
+        assertTrue(server.sent.last().body.contains(queued.id))
+        assertTrue(server.sent.last().body.contains("\"expected\""))
+        val updated = db.floor().order("reduce_order")!!
+        assertEquals("126.00", updated.total)
+        assertEquals("1", Floor.parseLines(updated.lines).single().qty)
+        assertTrue(db.intents().queued().isEmpty())
+    }
+
+    @Test fun a_complete_floor_replaces_table_details_and_removes_absent_tables() = runTest {
+        val body = com.magicbill.app.core.parseJsonOrNull("""{"tables_complete":true,"party_orders":true,"tables":[{"id":"t1","label":"Garden 1","section":"Garden","seats":8,"state":"taken"}],"orders":[{"order_id":"a","table_id":"t1","table_label":"Garden 1","order_type":"dine_in"},{"order_id":"b","table_id":"t1","table_label":"Garden 1B","seat":"B","order_type":"dine_in"}]}""") as JsonObject
+        server.fail("/v1/catalogue")
+        server.once("GET", "/v1/floor", FakeServer.Reply(200, body.toString()))
+        floor.catchUp()
+        val tables = db.floor().tables().first()
+        assertEquals(listOf("t1"), tables.map { it.id })
+        assertEquals("Garden", tables.single().section)
+        assertEquals(8, tables.single().seats)
+        assertEquals("taken", tables.single().state)
+        val view = com.magicbill.app.ui.screens.floor.TablesViewModel.View.of(tables, db.floor().openOrders().first())
+        assertEquals(setOf("a", "b"), view.onTable["t1"]!!.map { it.orderId }.toSet())
+        assertEquals("B", db.floor().order("b")!!.seat)
+        assertTrue(floor.supportsParties.value)
+        floor.takeFloor(com.magicbill.app.core.parseJsonOrNull("""{"tables_complete":true,"tables":[],"orders":[]}""") as JsonObject)
+        assertTrue(db.floor().tables().first().isEmpty())
+    }
+
+    @Test fun offline_orders_keep_separate_durable_dependencies_and_request_a_new_party() = runTest {
+        server.keep { if (it.path.contains("/v1/batch")) throw java.io.IOException("offline") else null }
+        floor.stageOrder(null, Floor.Place("t1", "1", "dine_in"), listOf(Floor.StagedLine("i1", "Idli", "1", null)), null, "40.00")
+        floor.stageOrder(null, Floor.Place("t1", "1", "dine_in", newParty = true), listOf(Floor.StagedLine("i2", "Tea", "1", null)), null, "10.00")
+        val queued = db.intents().queued()
+        val groups = queued.groupBy { it.openIntentId }
+        assertEquals(2, groups.size)
+        assertTrue(groups.keys.all { it != null })
+        assertEquals(listOf("open_order", "open_party"), groups.values.map { com.magicbill.app.core.MbJson.parseToJsonElement(it.first().what).toString() }.map { if (it.contains("open_party")) "open_party" else "open_order" })
+        for ((id, rows) in groups) {
+            assertEquals(id, rows.first().id)
+            assertEquals(3, rows.size)
+        }
+        floor.flush()
+        val wire = server.sent.filter { it.path.contains("/v1/batch") }
+        assertTrue(wire.isNotEmpty())
+        assertTrue(wire.all { it.body.contains("open_intent_id") })
+    }
+
     /** ONE press: staged in one write, on the floor at once as a sending tile, gone when answered. */
     @Test fun a_whole_order_is_staged_at_once_and_shows_on_the_floor_before_the_counter_answers() = runTest {
         server.fail("/v1/batch")

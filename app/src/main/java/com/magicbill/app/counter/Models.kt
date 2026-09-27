@@ -96,13 +96,14 @@ data class CatalogueTable(val id: String, val label: String, val section: String
  * [at] is when the person pressed; [sentAt] is stamped by the link the moment it goes, on
  * the same clock — the counter reads the age as the gap between them (§5).
  */
-data class Intent(val id: String, val orderId: String?, val at: Long, val what: JsonObject, val sentAt: Long? = null) {
+data class Intent(val id: String, val orderId: String?, val at: Long, val what: JsonObject, val sentAt: Long? = null, val openIntentId: String? = null) {
     fun toJson(): JsonObject = buildJsonObject {
         put("id", id)
         put("order_id", orderId?.let { JsonPrimitive(it) } ?: JsonNull)
         put("at", at)
         put("sent_at", sentAt?.let { JsonPrimitive(it) } ?: JsonNull)
         put("what", what)
+        openIntentId?.let { put("open_intent_id", it) }
     }
 
     val doName: String get() = what.str("do")
@@ -110,6 +111,9 @@ data class Intent(val id: String, val orderId: String?, val at: Long, val what: 
 
 /** The operations, spelled exactly as LAN_PROTOCOL.md §5 spells them. */
 object Ops {
+    fun openParty(tableId: String) = buildJsonObject {
+        put("do", "open_party"); put("table_id", tableId); put("covers", JsonNull)
+    }
     fun openOrder(orderType: String, tableId: String?, covers: Int?) = buildJsonObject {
         put("do", "open_order"); put("order_type", orderType)
         put("table_id", tableId?.let { JsonPrimitive(it) } ?: JsonNull)
@@ -120,6 +124,9 @@ object Ops {
         put("note", note?.let { JsonPrimitive(it) } ?: JsonNull); put("modifiers", JsonArray(emptyList()))
     }
     fun setQty(line: Int, qty: String) = buildJsonObject { put("do", "set_qty"); put("line", line); put("qty", qty) }
+    fun reduceQty(line: LineView, qty: String, reason: String) = buildJsonObject {
+        put("do", "reduce_qty"); put("expected", line.toJson()); put("qty", qty); put("reason", reason.trim())
+    }
     fun voidItem(line: Int, reason: String) = buildJsonObject { put("do", "void_item"); put("line", line); put("reason", reason) }
     fun setOrderNote(note: String?) = buildJsonObject { put("do", "set_order_note"); put("note", note?.let { JsonPrimitive(it) } ?: JsonNull) }
     fun setCovers(covers: Int?) = buildJsonObject { put("do", "set_covers"); put("covers", covers?.let { JsonPrimitive(it) } ?: JsonNull) }
@@ -138,6 +145,11 @@ object Ops {
  * that is all of it.
  */
 data class LineView(val line: Int, val name: String, val qty: String, val amount: String, val note: String?, val inKitchen: String, val sentToKitchen: Boolean) {
+    fun needsKitchenCancellation(quantity: String): Boolean {
+        val target = Money.parseQty(quantity) ?: return false
+        return target < (Money.parseQty(inKitchen) ?: 0L)
+    }
+
     /** Some of it has gone out, not all: the line was raised after the kitchen was told. */
     val partlyInKitchen: Boolean get() = !sentToKitchen && (Money.parseQty(inKitchen) ?: 0L) > 0L
 

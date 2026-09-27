@@ -1,6 +1,7 @@
 package com.magicbill.app.ui.screens.floor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,10 +33,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +61,8 @@ import com.magicbill.app.nav.OrderScreen
 import com.magicbill.app.ui.kit.Badge
 import com.magicbill.app.ui.kit.Empty
 import com.magicbill.app.ui.kit.IconDisc
+import com.magicbill.app.ui.kit.IconAction
+import com.magicbill.app.ui.kit.Sheet
 import com.magicbill.app.ui.kit.ListRow
 import com.magicbill.app.ui.kit.Notice
 import com.magicbill.app.ui.kit.Page
@@ -88,18 +95,26 @@ class TablesViewModel @Inject constructor(private val floor: Floor, val stream: 
     data class View(
         val tables: List<FloorTableRow> = emptyList(),
         /** Every open order on a table — anybody's — by table id. */
-        val onTable: Map<String, FloorOrderRow> = emptyMap(),
+        val onTable: Map<String, List<FloorOrderRow>> = emptyMap(),
         val noTable: List<FloorOrderRow> = emptyList(),
-    )
+    ) {
+        companion object {
+            fun of(tables: List<FloorTableRow>, orders: List<FloorOrderRow>) = View(
+                tables, orders.filter { it.tableId != null }.groupBy { it.tableId!! },
+                orders.filter { it.tableId == null || tables.none { t -> t.id == it.tableId } },
+            )
+        }
+    }
 
     val view: StateFlow<View> = combine(floor.tables, floor.openOrders) { t, orders ->
-        View(t, orders.filter { it.tableId != null }.associateBy { it.tableId!! }, orders.filter { it.tableId == null })
+        View.of(t, orders)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), View())
 
     val streamState: StateFlow<Stream.State> = stream.state
     val revoked: StateFlow<String?> = counter.revokedSays
     /** Warn and late, in minutes — the counter's own numbers, so both screens turn amber and red together. */
     val thresholds: StateFlow<Pair<Int, Int>> = floor.thresholds
+    val supportsParties: StateFlow<Boolean> = floor.supportsParties
     val shopName: String get() = counter.credential.value?.shopName ?: "the counter"
 
     private val refreshing = MutableStateFlow(false)
@@ -134,6 +149,8 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
     val revoked by vm.revoked.collectAsStateWithLifecycle()
     val refreshing by vm.isRefreshing.collectAsStateWithLifecycle()
     val thresholds by vm.thresholds.collectAsStateWithLifecycle()
+    val supportsParties by vm.supportsParties.collectAsStateWithLifecycle()
+    var addingParty by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.opened() }
     // The timers on the cards tick by themselves — the counter's minute plus the time since it spoke.
     val now by produceState(System.currentTimeMillis()) {
@@ -141,7 +158,10 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
     }
 
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh) {
-        Page("Orders", vm.shopName, scroll = false, bottomPadding = 0.dp, actions = { StreamBadge(stream) }) {
+        Page("Orders", vm.shopName, scroll = false, bottomPadding = 0.dp, actions = {
+            StreamBadge(stream)
+            if (supportsParties && view.tables.isNotEmpty()) IconAction(Icons.Outlined.Add, "Add sub-table", { addingParty = true })
+        }) {
             if (revoked != null) {
                 Notice(Tone.Danger, revoked!!, action = { SecondaryButton("Connect again", onPair) })
                 VGap(Gap.field)
@@ -170,8 +190,11 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
                             modifier = Modifier.padding(top = Space.s3),
                         )
                     }
-                    items(tables, key = { it.id }) { t ->
-                        val order = view.onTable[t.id]
+                    val tiles = tables.flatMap { t ->
+                        val orders = view.onTable[t.id].orEmpty()
+                        if (orders.isEmpty()) listOf(t to null) else orders.map { t to it }
+                    }
+                    items(tiles, key = { (t, o) -> o?.orderId ?: t.id }) { (t, order) ->
                         TableCard(t, order, now, thresholds) {
                             if (order != null && !order.orderId.startsWith(Floor.PENDING_PREFIX)) openOrder(OrderScreen(order.orderId, orderTitle(order.tableLabel, order.orderType)))
                             else if (order == null) openBuilder(NewOrder(tableId = t.id, tableLabel = t.label, orderType = "dine_in"))
@@ -209,6 +232,19 @@ fun TablesScreen(openOrder: (OrderScreen) -> Unit, openBuilder: (NewOrder) -> Un
             }
         }
     }
+    if (addingParty) {
+        Sheet("Add a sub-table", onDismiss = { addingParty = false }) {
+            androidx.compose.foundation.lazy.LazyColumn {
+                items(view.tables.size, key = { view.tables[it].id }) { i ->
+                    val table = view.tables[i]
+                    ListRow("Table ${table.label}", table.section, onClick = {
+                        addingParty = false
+                        openBuilder(NewOrder(tableId = table.id, tableLabel = table.label, orderType = "dine_in", newParty = true))
+                    })
+                }
+            }
+        }
+    }
 }
 
 /** [quietWhenLive]: a page whose title needs the room says nothing while all is well. */
@@ -236,15 +272,16 @@ fun minutesText(minutes: Int): String =
  *   You ………………… 👥 4
  *   5 items · 8m
  *
- * A card floats on a soft shadow, no border. A taken table says whose it is in words, in the
- * person's colour — the same colour that person has on the counter. Waiting and late live in
+ * A card floats on a soft shadow with a neutral border when free. A taken table wears the
+ * person's colour around its border and down its left edge, matching the counter. Waiting and late live in
  * the timer, amber then bold red. One still on its way to the counter breathes.
  */
 @Composable
 private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresholds: Pair<Int, Int>, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = Mb.colors
     val shape = RoundedCornerShape(Radius.lg)
-    val number = t.label.removePrefix(t.section).ifBlank { t.label }.trim()
+    val label = order?.tableLabel ?: t.label
+    val number = label.removePrefix(t.section).ifBlank { label }.trim()
     val sending = order != null && (order.sending || order.orderId.startsWith(Floor.PENDING_PREFIX))
     val person = if (order == null) c.inkMuted else c.person(order.byId)
     val minutes = order?.minutes?.let { it + ((now - order.updatedMs) / 60_000).toInt().coerceAtLeast(0) }
@@ -257,6 +294,11 @@ private fun TableCard(t: FloorTableRow, order: FloorOrderRow?, now: Long, thresh
         modifier.aspectRatio(Tile.ratio).pressScale(interaction)
             .shadow(Elevation.card, shape, ambientColor = c.scrim, spotColor = c.scrim)
             .background(c.surface, shape)
+            .border(if (order != null) 2.dp else 1.dp, if (order != null) person else c.line, shape)
+            .clip(shape)
+            .drawBehind {
+                if (order != null) drawRect(person, size = Size(4.dp.toPx(), size.height))
+            }
             .tappable(onClick, interactionSource = interaction)
             .padding(Space.s2),
     ) {

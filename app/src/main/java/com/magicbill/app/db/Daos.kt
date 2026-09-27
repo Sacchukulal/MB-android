@@ -151,7 +151,7 @@ interface IntentDao {
     @Query("SELECT * FROM intents WHERE id = :id")
     suspend fun byId(id: String): IntentRow?
 
-    @Query("SELECT * FROM intents WHERE state = 'queued' ORDER BY createdMs")
+    @Query("SELECT * FROM intents WHERE state = 'queued' ORDER BY createdMs, rowid")
     suspend fun queued(): List<IntentRow>
 
     @Query("SELECT COUNT(*) FROM intents WHERE state = 'queued'")
@@ -177,6 +177,11 @@ interface FloorDao {
     @Transaction
     suspend fun replaceCatalogue(items: List<FloorItemRow>, tables: List<FloorTableRow>) {
         clearItems(); clearTables(); putItems(items); putTables(tables)
+    }
+
+    @Transaction
+    suspend fun replaceTables(tables: List<FloorTableRow>) {
+        clearTables(); putTables(tables)
     }
 
     @Query("SELECT * FROM floor_items ORDER BY ord") fun items(): Flow<List<FloorItemRow>>

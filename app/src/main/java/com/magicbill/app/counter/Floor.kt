@@ -8,6 +8,7 @@ import com.magicbill.app.core.Sentences
 import com.magicbill.app.core.arr
 import com.magicbill.app.core.bool
 import com.magicbill.app.core.intOrNull
+import com.magicbill.app.core.int
 import com.magicbill.app.core.newId
 import com.magicbill.app.core.objects
 import com.magicbill.app.core.parseJsonOrNull
@@ -69,12 +70,16 @@ class Floor @Inject constructor(
     private val sending = Mutex()
     /** The floor is written by one hand at a time: a push and a pull-to-refresh never interleave. */
     private val applying = Mutex()
+    private val parties = MutableStateFlow(false)
+    val supportsParties: StateFlow<Boolean> get() = parties
+    private val partialCancellation = MutableStateFlow(false)
+    val supportsPartialCancellation: StateFlow<Boolean> get() = partialCancellation
 
     /** `GET /v1/catalogue?version=…`; 304 keeps what we have. */
-    suspend fun refreshCatalogue(force: Boolean = false): Answer<Boolean> {
-        val c = counter.credential.value ?: return Answer.SignedOut(Sentences.NOT_PAIRED)
+    suspend fun refreshCatalogue(force: Boolean = false): Answer<Boolean> = applying.withLock {
+        val c = counter.credential.value ?: return@withLock Answer.SignedOut(Sentences.NOT_PAIRED)
         val held = if (force) null else secure.get(Secure.CATALOGUE_VERSION)
-        return when (val a = link.catalogue(c, held)) {
+        when (val a = link.catalogue(c, held)) {
             is Answer.Ok -> {
                 val cat = a.value
                 if (cat != null) {
@@ -93,7 +98,11 @@ class Floor @Inject constructor(
     }
 
     /** Where an order sits, for the label on the queue. */
-    data class Place(val tableId: String?, val tableLabel: String?, val orderType: String)
+    data class Place(val tableId: String?, val tableLabel: String?, val orderType: String, val newParty: Boolean = false)
+
+    private fun IntentRow.wire(): Intent? = (parseJsonOrNull(what) as? JsonObject)?.let {
+        Intent(id, orderId, atMs, it, openIntentId = openIntentId?.takeUnless { opening -> opening == id })
+    }
 
     /**
      * One request about an existing order, answered. The row is durable before the first send;
@@ -132,20 +141,30 @@ class Floor @Inject constructor(
         val c = counter.credential.value ?: return@withLock Answer.SignedOut(Sentences.NOT_PAIRED)
         val queued = db.intents().queued()
         if (queued.isEmpty()) return@withLock Answer.Ok(null)
-        val intents = queued.mapNotNull { row -> (parseJsonOrNull(row.what) as? JsonObject)?.let { Intent(row.id, row.orderId, row.atMs, it) } }
-        when (val a = link.batch(c, intents)) {
-            is Answer.Ok -> {
-                val byId = queued.associateBy { it.id }
-                for ((id, outcome) in a.value.outcomes) byId[id]?.let { record(it, outcome, null) }
-                // A staged order whose batch has now been answered is no longer "sending".
-                db.floor().dropPendingAnswered()
-                if (a.value.says.isNotBlank()) said.tryEmit(a.value.says)
-                a
+        var last: Answer<BatchResult?> = Answer.Ok(null)
+        // One new order per request also keeps older counters safe: they cannot borrow an
+        // order from a preceding group. Explicit dependencies survive partial local replies.
+        for (group in queued.groupBy { it.openIntentId ?: it.orderId ?: it.id }.values) {
+            val anchor = group.first().openIntentId?.let { db.intents().byId(it) }
+            val rows = if (anchor?.state == "ok" && group.none { it.id == anchor.id }) listOf(anchor) + group else group
+            when (val a = link.batch(c, rows.mapNotNull { it.wire() })) {
+                is Answer.Ok -> {
+                    applying.withLock {
+                        db.withTransaction {
+                            val byId = rows.associateBy { it.id }
+                            for ((id, outcome) in a.value.outcomes) byId[id]?.let { record(it, outcome, null) }
+                            db.floor().dropPendingAnswered()
+                        }
+                    }
+                    if (a.value.says.isNotBlank()) said.tryEmit(a.value.says)
+                    last = a
+                }
+                is Answer.Unreachable -> return@withLock a
+                is Answer.Refused -> return@withLock a
+                is Answer.SignedOut -> { counter.refreshMe(); return@withLock a }
             }
-            is Answer.Unreachable -> a
-            is Answer.Refused -> a
-            is Answer.SignedOut -> { counter.refreshMe(); a }
         }
+        last
     }
 
     /** One dish of a staged order. */
@@ -160,6 +179,7 @@ class Floor @Inject constructor(
      */
     suspend fun stageOrder(orderId: String?, place: Place, lines: List<StagedLine>, note: String?, estimate: String): Answer<Unit> {
         if (lines.isEmpty()) return Answer.Refused("Nothing on this order yet. Add a dish first.")
+        if (place.newParty && place.tableId == null) return Answer.Refused("Choose a table for the new party.")
         val now = clock.now()
         val whereLabel = place.tableLabel?.let { "table $it" } ?: place.orderType.replace('_', ' ')
         val batchId = newId()
@@ -170,20 +190,21 @@ class Floor @Inject constructor(
         val noteChanged = kept != existing?.note?.trim()?.ifBlank { null }
         val rows = buildList {
             if (orderId == null) {
-                add(IntentRow(batchId, null, now, Ops.openOrder(place.orderType, place.tableId, null).toString(), "Open $whereLabel", place.tableLabel, "queued", null, now, null, 0))
+                val opening = if (place.newParty) Ops.openParty(place.tableId!!) else Ops.openOrder(place.orderType, place.tableId, null)
+                add(IntentRow(batchId, null, now, opening.toString(), "Open $whereLabel", place.tableLabel, "queued", null, now, null, 0))
             }
             lines.forEach { l ->
                 add(IntentRow(newId(), orderId, now, Ops.addItem(l.itemId, l.qty, l.note).toString(), "${l.qty} × ${l.name}", place.tableLabel, "queued", null, now, null, 0))
             }
             if (noteChanged) add(IntentRow(newId(), orderId, now, Ops.setOrderNote(kept).toString(), "Note for the kitchen", place.tableLabel, "queued", null, now, null, 0))
             add(IntentRow(newId(), orderId, now, Ops.sendToKitchen().toString(), "Send $whereLabel to the kitchen", place.tableLabel, "queued", null, now, null, 0))
-        }
+        }.map { if (orderId == null) it.copy(openIntentId = batchId) else it }
         // The floor shows it NOW: a new order as a sending tile, an addition as sending lines
         // on the order it belongs to. The counter's answer replaces both.
         val pendingLines = lines.mapIndexed { i, l -> LineView(i, l.name, l.qty, "", l.note, "0", false) }
         val pending = if (orderId == null) {
             FloorOrderRow(
-                orderId = PENDING_PREFIX + batchId, tableId = place.tableId, tableLabel = place.tableLabel, orderType = place.orderType,
+                orderId = PENDING_PREFIX + batchId, tableId = place.tableId, tableLabel = if (place.newParty) "${place.tableLabel} · New party" else place.tableLabel, orderType = place.orderType,
                 total = estimate, token = null, lines = linesJson(pendingLines), note = kept, by = counter.me.value?.name, byId = counter.me.value?.staffId,
                 mine = true, billAsked = false, settleAsked = false, sending = true, closedSays = null, updatedMs = now,
             )
@@ -219,6 +240,7 @@ class Floor @Inject constructor(
         db.intents().put(row.copy(state = state, outcome = Outcome.toJson(outcome), answeredMs = clock.now()))
         if (outcome is Outcome.Ok) {
             val existing = db.floor().order(outcome.orderId)
+                ?: row.openIntentId?.let { db.floor().order(PENDING_PREFIX + it) }
             val what = parseJsonOrNull(row.what) as? JsonObject
             val closes = what?.str("do") == "cancel_order"
             val asksBill = what?.str("do") == "request_bill"
@@ -245,6 +267,7 @@ class Floor @Inject constructor(
                     sending = false,
                     closedSays = if (closes) "This order was cancelled." else null,
                     updatedMs = clock.now(),
+                    seat = existing?.seat,
                 ),
             )
         } else if (outcome is Outcome.Refused && row.orderId != null) {
@@ -278,11 +301,20 @@ class Floor @Inject constructor(
         val now = clock.now()
         body.intOrNull("warn_minutes")?.let { w -> body.intOrNull("late_minutes")?.let { l -> thresholdsFlow.value = w to l } }
         val myStaff = counter.me.value?.staffId
+        parties.value = body.bool("party_orders")
+        partialCancellation.value = body.bool("partial_item_cancellation")
         // ONE transaction: the screens see the whole floor change at once, never half of it.
         db.withTransaction {
-            for (t in body.arr("tables").objects()) {
-                val id = t.str("id")
-                if (id.isNotEmpty()) db.floor().setTableState(id, t.str("state"))
+            val tables = body.arr("tables").objects()
+            if (body.bool("tables_complete")) {
+                db.floor().replaceTables(tables.mapIndexed { i, t ->
+                    FloorTableRow(t.str("id"), t.str("label"), t.str("section"), t.int("seats"), t.str("state"), i)
+                })
+            } else {
+                for (t in tables) {
+                    val id = t.str("id")
+                    if (id.isNotEmpty()) db.floor().setTableState(id, t.str("state"))
+                }
             }
             val open = body.arr("orders").objects().associateBy { it.str("order_id") }
             val known = db.floor().openOrdersNow().associateBy { it.orderId }
@@ -320,6 +352,7 @@ class Floor @Inject constructor(
                         sending = row?.sending ?: false,
                         closedSays = null,
                         updatedMs = now,
+                        seat = o.strOrNull("seat"),
                     ),
                 )
             }
@@ -355,6 +388,8 @@ class Floor @Inject constructor(
 
     /** Everything about this counter, gone — with the credential. */
     suspend fun forgetAll() {
+        parties.value = false
+        partialCancellation.value = false
         db.floor().replaceCatalogue(emptyList(), emptyList())
         db.floor().clearOrders()
         counter.leave()

@@ -18,7 +18,7 @@ import androidx.room.RoomDatabase
         CursorRow::class, IntentRow::class, FloorItemRow::class, FloorTableRow::class, FloorOrderRow::class,
         ArchiveDayRow::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class MbDatabase : RoomDatabase() {
@@ -45,13 +45,13 @@ abstract class MbDatabase : RoomDatabase() {
 
         /**
          * Every step from 4 on is a real migration: with the whole bill history on the phone a
-         * wipe is a full re-download. 1–3 were never given a migration (the 3.0 dev builds) and
-         * are still dropped; nothing on them cannot be pulled again in seconds.
+         * wipe is a full re-download. Versions 1–2 were development builds without migrations;
+         * version 3 has its own migration and must not also be listed for destructive reset.
          */
         fun open(context: Context): MbDatabase =
             Room.databaseBuilder(context, MbDatabase::class.java, NAME)
                 .addMigrations(*MIGRATIONS)
-                .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3)
+                .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2)
                 .build()
 
         /** 3 → 4: a phone may ask the counter to settle a bill; the floor says which ones it did. */
@@ -72,7 +72,29 @@ abstract class MbDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_3_4, MIGRATION_4_5)
+        private val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE intents ADD COLUMN openIntentId TEXT")
+                db.execSQL("ALTER TABLE floor_orders ADD COLUMN seat TEXT")
+                // Old staged orders wrote all their operations at the same instant and in row order.
+                // Include answered opens so a partially recorded reply keeps its dependency too.
+                var opening: String? = null
+                var openedAt: Long? = null
+                db.query("SELECT id, orderId, what, createdMs FROM intents ORDER BY createdMs, rowid").use { rows ->
+                    while (rows.moveToNext()) {
+                        val what = com.magicbill.app.core.parseJsonOrNull(rows.getString(2)) as? kotlinx.serialization.json.JsonObject
+                        val action = (what?.get("do") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        val at = rows.getLong(3)
+                        if (action == "open_order") { opening = rows.getString(0); openedAt = at }
+                        if (rows.isNull(1) && opening != null && openedAt == at) {
+                            db.execSQL("UPDATE intents SET openIntentId = ? WHERE id = ?", arrayOf(opening, rows.getString(0)))
+                        }
+                    }
+                }
+            }
+        }
+
+        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         fun inMemory(context: Context): MbDatabase =
             Room.inMemoryDatabaseBuilder(context, MbDatabase::class.java).allowMainThreadQueries().build()

@@ -91,6 +91,7 @@ class OrderViewModel @Inject constructor(saved: SavedStateHandle, private val fl
 
     private val busyFlow = MutableStateFlow(false)
     val busy: StateFlow<Boolean> get() = busyFlow
+    val supportsPartialCancellation: StateFlow<Boolean> = floor.supportsPartialCancellation
 
     val may: Set<String> get() = counter.me.value?.may ?: emptySet()
 
@@ -120,12 +121,14 @@ class OrderViewModel @Inject constructor(saved: SavedStateHandle, private val fl
 fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) -> Unit, vm: OrderViewModel = hiltViewModel()) {
     val loaded by vm.view.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val supportsPartialCancellation by vm.supportsPartialCancellation.collectAsStateWithLifecycle()
     val stream by vm.stream.state.collectAsStateWithLifecycle()
     val reporter = LocalReporter.current
     LaunchedEffect(Unit) { vm.opened() }
     // The page is whole from its first frame; the rows fade in the moment the database answers.
     val view = loaded
     var lineMenu by remember { mutableStateOf<LineView?>(null) }
+    var reducing by remember { mutableStateOf<Pair<LineView, String>?>(null) }
     var more by remember { mutableStateOf(false) }
     var reasonFor by remember { mutableStateOf<String?>(null) } // "void:<line>" | "cancel"
     var moving by remember { mutableStateOf(false) }
@@ -160,7 +163,7 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
                             }
                         }
                     },
-                    onClick = if (closed == null && !o.sending) ({ lineMenu = l }) else null,
+                    onClick = if (closed == null && !o.sending && !busy) ({ lineMenu = l }) else null,
                 )
             }
             item {
@@ -204,17 +207,49 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
             var qty by remember { mutableStateOf(l.qty) }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("How many", style = Mb.type.body, color = Mb.colors.ink)
-                // What the kitchen already has cannot be stepped away; it is taken off, with a reason.
-                Stepper(qty, onMinus = { qty = step(qty, -1, atLeast = l.inKitchen) }, onPlus = { qty = step(qty, +1) })
+                Stepper(qty, onMinus = { qty = step(qty, -1) }, onPlus = { qty = step(qty, +1) }, enabled = !busy)
+            }
+            val cancellation = l.needsKitchenCancellation(qty)
+            val mayCancel = vm.may.contains("order.item.void")
+            if (cancellation) {
+                VGap(Gap.field)
+                Text(
+                    when {
+                        !supportsPartialCancellation -> "Update the POS app to reduce quantities already sent to the kitchen."
+                        !mayCancel -> "Ask a manager or someone with item cancellation permission to reduce this quantity."
+                        else -> "The kitchen already has ${l.inKitchen}. Give a reason to cancel the extra quantity."
+                    },
+                    style = Mb.type.body, color = Mb.colors.inkMuted,
+                )
             }
             VGap(Gap.group)
-            PrimaryButton("Change to $qty", { lineMenu = null; vm.send(Ops.setQty(l.line, qty), "$qty × ${l.name}", reporter::say) }, Modifier.fillMaxWidth(), enabled = qty != l.qty)
+            PrimaryButton(if (cancellation) "Reduce to $qty…" else "Change to $qty", {
+                lineMenu = null
+                if (cancellation) reducing = l to qty
+                else vm.send(Ops.setQty(l.line, qty), "$qty × ${l.name}", reporter::say)
+            }, Modifier.fillMaxWidth(), enabled = qty != l.qty && !busy && (!cancellation || (mayCancel && supportsPartialCancellation)))
             // Taking a dish off is the counter's "void an item" permission, so the button is only
             // there for a person who holds it.
             if (vm.may.contains("order.item.void")) {
                 VGap(Gap.field)
                 SecondaryButton("Take it off the order", { lineMenu = null; reasonFor = "void:${l.line}:${l.name}" }, Modifier.fillMaxWidth())
             }
+        }
+    }
+
+    reducing?.let { (line, qty) ->
+        Sheet("Reduce ${line.name}: ${line.qty} → $qty", onDismiss = { reducing = null }) {
+            var reason by remember(line, qty) { mutableStateOf("") }
+            Text("The bill will be updated and a cancellation ticket will tell the kitchen how many to stop preparing.", style = Mb.type.body, color = Mb.colors.inkMuted)
+            VGap(Gap.field)
+            ChipRow(listOf("Customer changed mind", "Wrong quantity", "Not available", "Too long"), reason) { reason = it }
+            VGap(Gap.field)
+            Field(reason, { reason = it }, "Reason", ime = ImeAction.Done)
+            VGap(Gap.group)
+            PrimaryButton("Confirm reduction to $qty", {
+                reducing = null
+                vm.send(Ops.reduceQty(line, qty, reason), "Reduce ${line.name} to $qty", reporter::say)
+            }, Modifier.fillMaxWidth(), enabled = reason.isNotBlank() && !busy && closed == null && o?.sending == false)
         }
     }
 
@@ -270,10 +305,11 @@ fun OrderScreenView(back: () -> Unit, addMore: (com.magicbill.app.nav.NewOrder) 
 fun orderTitle(tableLabel: String?, orderType: String?): String =
     tableLabel?.let { "Table $it" } ?: orderType?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Order"
 
-/** "2" → "3"; "0.5" → "1.5"; never below 0.5, nor below [atLeast] when one is given. */
-internal fun step(qty: String, by: Int, atLeast: String? = null): String {
-    val t = Money.parseQty(qty) ?: 1000L
-    val floor = maxOf(500L, atLeast?.let(Money::parseQty) ?: 0L)
-    val n = (t + by * 1000L).coerceAtLeast(floor)
-    return Money.qty(n)
+/** Whole items only: 3 → 2 → 1. Removing the item is a separate, reasoned action. */
+internal fun step(qty: String, by: Int): String {
+    val thousandths = Money.parseQty(qty) ?: 1000L
+    val whole = thousandths / 1000L
+    // An older fractional order steps to the next whole number in the chosen direction.
+    val next = if (by < 0 && thousandths % 1000L != 0L) whole else whole + by
+    return next.coerceAtLeast(1L).toString()
 }

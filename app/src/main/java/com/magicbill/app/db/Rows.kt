@@ -257,6 +257,8 @@ data class IntentRow(
     val createdMs: Long,
     val answeredMs: Long?,
     val attempts: Int,
+    /** The durable opening this operation depends on, shared by one staged new order. */
+    val openIntentId: String? = null,
 )
 
 /** The counter's catalogue, cached so the floor opens with no network. */
@@ -294,4 +296,5 @@ data class FloorOrderRow(
     /** Open, or the counter's sentence about why it is not. */
     val closedSays: String?,
     val updatedMs: Long,
+    val seat: String? = null,
 )

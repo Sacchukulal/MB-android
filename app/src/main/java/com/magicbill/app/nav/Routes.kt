@@ -30,6 +30,6 @@ import kotlinx.serialization.Serializable
 /** [title] is what the floor already knows, so the page has its name before the database answers. */
 @Serializable data class OrderScreen(val orderId: String, val title: String = "Order")
 /** The order builder: a new order on a table (or parcel/delivery), or adding to an open one. */
-@Serializable data class NewOrder(val tableId: String? = null, val tableLabel: String? = null, val orderType: String = "dine_in", val orderId: String? = null)
+@Serializable data class NewOrder(val tableId: String? = null, val tableLabel: String? = null, val orderType: String = "dine_in", val orderId: String? = null, val newParty: Boolean = false)
 @Serializable object Queue
 @Serializable object Me

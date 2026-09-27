@@ -144,7 +144,7 @@ class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private
             val lines = cart.value.mapNotNull { (id, q) ->
                 items.firstOrNull { it.id == id }?.let { Floor.StagedLine(id, it.name, Money.qty(q), null) }
             }
-            val place = Floor.Place(route.tableId, route.tableLabel, route.orderType)
+            val place = Floor.Place(route.tableId, route.tableLabel, route.orderType, route.newParty)
             val estimate = Money.plain(tally.value.estimatePaise)
             when (val a = floor.stageOrder(route.orderId, place, lines, noteFlow.value.trim().ifBlank { null }, estimate)) {
                 is Answer.Ok -> done()
@@ -169,7 +169,7 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
     var noting by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.opened() }
 
-    val title = vm.route.tableLabel?.let { "Table $it" }
+    val title = vm.route.tableLabel?.let { if (vm.route.newParty) "New party · Table $it" else "Table $it" }
         ?: vm.route.orderType.replace('_', ' ').replaceFirstChar { it.uppercase() }
 
     Column(Modifier.fillMaxSize().imePadding()) {
