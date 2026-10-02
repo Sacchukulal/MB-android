@@ -177,7 +177,7 @@ fun Shell(vm: RootViewModel) {
 
     // Back on a tab: twice within two seconds leaves the app. Never a dead end, never a surprise.
     var lastBack by remember { mutableLongStateOf(0L) }
-    val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+    val activity = androidx.activity.compose.LocalActivity.current
     BackHandler(enabled = showBar) {
         val now = System.currentTimeMillis()
         if (now - lastBack < 2_000) activity?.finish() else { lastBack = now; reporter.say("Press back again to leave.") }
