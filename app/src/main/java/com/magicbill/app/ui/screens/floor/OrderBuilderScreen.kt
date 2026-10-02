@@ -31,6 +31,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -128,7 +131,10 @@ class OrderBuilderViewModel @Inject constructor(saved: SavedStateHandle, private
     fun pick(c: String) { category.value = c }
     fun setNote(text: String) { noteFlow.value = text }
 
-    fun plus(id: String) = bump(id, +1000)
+    fun plus(id: String) {
+        bump(id, +1000)
+        query.value = ""
+    }
     fun minus(id: String) = bump(id, -1000)
     private fun bump(id: String, by: Long) {
         cart.value = cart.value.toMutableMap().also { m ->
@@ -167,6 +173,8 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
     val sentence by vm.sentence.collectAsStateWithLifecycle()
     val stream by vm.stream.state.collectAsStateWithLifecycle()
     var noting by remember { mutableStateOf(false) }
+    val searchFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { vm.opened() }
 
     val title = vm.route.tableLabel?.let { if (vm.route.newParty) "New party · Table $it" else "Table $it" }
@@ -175,7 +183,7 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
     Column(Modifier.fillMaxSize().imePadding()) {
         PageHeader(title, if (vm.route.orderId == null) "New order" else "Adding to the order", back = back, actions = { StreamBadge(stream, quietWhenLive = true) })
         Column(Modifier.padding(horizontal = Gap.page)) {
-            SearchField(search, vm::setSearch, "Search menu…")
+            SearchField(search, vm::setSearch, "Search menu…", Modifier.focusRequester(searchFocus))
             VGap(Gap.field)
             ChipRow(categories, picked) { vm.pick(it) }
             VGap(Gap.field)
@@ -187,7 +195,14 @@ fun OrderBuilderScreen(back: () -> Unit, done: () -> Unit, vm: OrderBuilderViewM
         Arrives(Modifier.weight(1f).fillMaxWidth(), ready = menu != null) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = Gap.page, end = Gap.page, bottom = Space.s5)) {
                 items(menu.orEmpty(), key = { it.item.id }) { row ->
-                    DishRow(row, Modifier.animateItem(), onPlus = { vm.plus(row.item.id) }, onMinus = { vm.minus(row.item.id) })
+                    DishRow(row, Modifier.animateItem(), onPlus = {
+                        val wasSearching = vm.search.value.isNotEmpty()
+                        vm.plus(row.item.id)
+                        if (wasSearching) {
+                            searchFocus.requestFocus()
+                            keyboard?.show()
+                        }
+                    }, onMinus = { vm.minus(row.item.id) })
                 }
             }
         }
