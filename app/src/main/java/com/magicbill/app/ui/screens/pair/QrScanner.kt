@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -26,38 +27,56 @@ import java.util.concurrent.Executors
 
 /** The camera, looking for one QR. Calls [onCode] with its text; the caller decides what it was. */
 @Composable
-fun QrScanner(onCode: (String) -> Unit, modifier: Modifier = Modifier) {
+fun QrScanner(onCode: (String) -> Unit, modifier: Modifier = Modifier, onUnavailable: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
-    val executor = remember { Executors.newSingleThreadExecutor() }
-    val reader = remember {
-        MultiFormatReader().apply {
-            setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE), DecodeHintType.TRY_HARDER to true))
-        }
-    }
+    val currentCode = rememberUpdatedState(onCode)
+    val currentUnavailable = rememberUpdatedState(onUnavailable)
     val view = remember { PreviewView(context).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE } }
 
     DisposableEffect(lifecycle) {
-        val future = ProcessCameraProvider.getInstance(context)
+        val executor = Executors.newSingleThreadExecutor()
+        val main = ContextCompat.getMainExecutor(context)
+        val reader = MultiFormatReader().apply {
+            setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE), DecodeHintType.TRY_HARDER to true))
+        }
+        var disposed = false
         var provider: ProcessCameraProvider? = null
-        future.addListener({
-            val p = future.get()
-            provider = p
-            val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
-            val analysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                .build()
-            analysis.setAnalyzer(executor) { image -> decode(image, reader)?.let(onCode) }
-            try {
-                p.unbindAll()
-                p.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-            } catch (e: Exception) {
-                // No camera, or it is in use: the typed code is the other way in.
-            }
-        }, ContextCompat.getMainExecutor(context))
+        var preview: Preview? = null
+        var analysis: ImageAnalysis? = null
+        try {
+            val future = ProcessCameraProvider.getInstance(context)
+            future.addListener({
+                if (!disposed) {
+                    try {
+                        val p = future.get()
+                        provider = p
+                        val cameraPreview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
+                        val cameraAnalysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .build()
+                        preview = cameraPreview
+                        analysis = cameraAnalysis
+                        cameraAnalysis.setAnalyzer(executor) { image ->
+                            decode(image, reader)?.let { code ->
+                                main.execute { if (!disposed) currentCode.value(code) }
+                            }
+                        }
+                        p.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, cameraPreview, cameraAnalysis)
+                    } catch (e: Exception) {
+                        currentUnavailable.value()
+                    }
+                }
+            }, main)
+        } catch (e: Exception) {
+            currentUnavailable.value()
+        }
         onDispose {
-            provider?.unbindAll()
+            disposed = true
+            analysis?.clearAnalyzer()
+            val owned = listOfNotNull(preview, analysis)
+            if (owned.isNotEmpty()) provider?.unbind(*owned.toTypedArray())
             executor.shutdown()
         }
     }

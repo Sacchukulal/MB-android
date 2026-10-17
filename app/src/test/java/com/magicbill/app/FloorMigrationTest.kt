@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], manifest = Config.NONE, application = android.app.Application::class)
+@Config(sdk = [23, 34], manifest = Config.NONE, application = android.app.Application::class)
 class FloorMigrationTest {
     @Test fun version_five_orders_keep_their_open_dependencies_and_room_validates_the_upgrade() = runTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()

@@ -1,7 +1,6 @@
 package com.magicbill.app.counter
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.Network
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -73,6 +72,7 @@ class Stream @Inject constructor(
         data class Text(val text: String) : Frame
     }
     private val inbox = Channel<Frame>(Channel.UNLIMITED)
+    private val networkMonitor = DefaultNetworkMonitor(context, ::networkChanged, ::networkGone)
 
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
@@ -84,10 +84,7 @@ class Stream @Inject constructor(
             counter.credential.collect { c -> if (c == null) close() else if (foreground) open() }
         }
         scope.launch(Dispatchers.IO) { for (frame in inbox) take(frame) }
-        context.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = networkChanged(network)
-            override fun onLost(network: Network) = networkGone(network)
-        })
+        networkMonitor.start()
     }
 
     /** The app came to the floor: make sure the line is up. Safe to call any time. */

@@ -22,11 +22,12 @@ android {
 
     defaultConfig {
         applicationId = "com.magicbill.app"
-        minSdk = 26
+        minSdk = 23
         targetSdk = 36
         // Must only ever go up: the phone compares codes to decide whether an update is newer.
         versionCode = 31
         versionName = "2.5.10"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // The cloud's public address and anon key. Public by design (RLS is the wall), but kept
         // out of the source so the secret scanner has nothing to find in .kt.
@@ -38,6 +39,9 @@ android {
         // Release signing MUST use keys/magic-bill-release.keystore (alias "magicbill") —
         // the same cert as every published build, or installed phones cannot update in place.
         create("release") {
+            // Android 6 verifies JAR signatures; newer Android also uses v2.
+            enableV1Signing = true
+            enableV2Signing = true
             val storePath = secret("MB_KEYSTORE_FILE")
             if (storePath.isNotEmpty()) {
                 storeFile = rootProject.file(storePath)
@@ -66,6 +70,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -92,6 +97,7 @@ ksp {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)
@@ -136,4 +142,6 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.room.runtime)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }

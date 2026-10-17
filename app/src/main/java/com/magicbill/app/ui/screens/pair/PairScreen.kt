@@ -158,6 +158,7 @@ fun PairScreen(back: () -> Unit, done: () -> Unit, vm: PairViewModel = hiltViewM
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     var token by rememberSaveable { mutableStateOf("") }
     var typing by rememberSaveable { mutableStateOf(false) }
+    var cameraUnavailable by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!granted) ask.launch(Manifest.permission.CAMERA) }
     LaunchedEffect(step) { if (step is PairViewModel.Step.Done) done() }
 
@@ -172,13 +173,17 @@ fun PairScreen(back: () -> Unit, done: () -> Unit, vm: PairViewModel = hiltViewM
                 else -> {
                     if (granted && !typing) {
                         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(Radius.lg)).background(Mb.colors.raised)) {
-                            QrScanner(onCode = vm::scanned)
+                            QrScanner(onCode = vm::scanned, onUnavailable = { cameraUnavailable = true; typing = true })
                         }
                         VGap(Gap.field)
                         Text("Hold the phone up to the code on the counter's screen. Then somebody at the counter picks your name and presses Allow.", style = Mb.type.caption, color = Mb.colors.inkMuted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         VGap(Gap.group)
                         QuietButton("Type the code instead", { typing = true }, Modifier.fillMaxWidth())
                     } else {
+                        if (cameraUnavailable) {
+                            Notice(Tone.Info, "The camera could not start. Type the code under the counter's QR instead.")
+                            VGap(Gap.field)
+                        }
                         if (!granted) {
                             Notice(Tone.Info, "Without the camera, type the code instead.", action = { QuietButton("Allow camera", { ask.launch(Manifest.permission.CAMERA) }) })
                             VGap(Gap.field)
@@ -186,7 +191,7 @@ fun PairScreen(back: () -> Unit, done: () -> Unit, vm: PairViewModel = hiltViewM
                         CodeField(token, { token = dashed(it) }, "The code under the QR", placeholder = "8GF-CVC", onDone = { if (token.length >= 7) vm.typed(token) })
                         VGap(Gap.field)
                         PrimaryButton("Connect", { vm.typed(token) }, Modifier.fillMaxWidth(), enabled = token.length >= 7)
-                        if (granted) { VGap(Gap.field); QuietButton("Scan it instead", { typing = false }, Modifier.fillMaxWidth()) }
+                        if (granted) { VGap(Gap.field); QuietButton("Scan it instead", { cameraUnavailable = false; typing = false }, Modifier.fillMaxWidth()) }
                     }
                 }
             }

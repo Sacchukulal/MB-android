@@ -20,7 +20,7 @@ interface KeyBox {
  * The phone's keystore-backed box: sessions, the counter credential, the install id. Nothing
  * that goes in here is ever written to the database — a database is what a backup carries.
  * EncryptedSharedPreferences is deprecated upstream and used on purpose: it is what every
- * Android from 8 up has, and its replacement is not out yet.
+ * supported Android from 6 up can use with its keystore-backed master key.
  */
 @Singleton
 class Secure @Inject constructor(@ApplicationContext private val context: Context) : KeyBox {

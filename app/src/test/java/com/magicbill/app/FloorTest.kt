@@ -32,7 +32,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], manifest = Config.NONE, application = android.app.Application::class)
+@Config(sdk = [23, 34], manifest = Config.NONE, application = android.app.Application::class)
 class FloorTest {
     private lateinit var db: MbDatabase
     private val server = FakeServer()

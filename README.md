@@ -38,8 +38,11 @@ MB_KEY_PASSWORD=...
 .\gradlew.bat :app:assembleRelease   # signed, minified
 ```
 
-Toolchain: Gradle 9.4.1 · AGP 9.2 (built-in Kotlin 2.3) · minSdk 26 ·
+Toolchain: Gradle 9.4.1 · AGP 9.2 (built-in Kotlin 2.3) · minSdk 23 (Android 6) ·
 target/compile SDK 36/37.
+
+Core-library desugaring supplies date/time and Base64 APIs on Android 6/7.
+Signed APKs retain v1 signatures for Android 6 and v2 for newer devices.
 
 ## Releasing
 

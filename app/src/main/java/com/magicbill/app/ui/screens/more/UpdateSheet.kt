@@ -94,7 +94,7 @@ fun UpdateSheet(state: Updater.State, updater: Updater) {
                     WhatIsNew(state.release)
                     VGap(Gap.group)
                     if (state.needsPermission) {
-                        Notice(Tone.Warn, "Android needs a one-time switch: allow Magic Bill to install updates, then come back here.")
+                        Notice(Tone.Warn, updater.installPermissionMessage)
                         VGap(Gap.field)
                         PrimaryButton("Open settings", updater::openInstallSettings, Modifier.fillMaxWidth())
                     } else {

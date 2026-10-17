@@ -1,8 +1,10 @@
 package com.magicbill.app.update
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.magicbill.app.BuildConfig
@@ -91,6 +93,8 @@ class Updater @Inject constructor(
 
     private var checking: Job? = null
     private var downloading: Job? = null
+    private val installAccess = InstallAccess(context)
+    val installPermissionMessage: String get() = installAccess.message
 
     /** On start: look, and open the sheet only for a build not turned down today. */
     fun checkQuietly() {
@@ -145,31 +149,41 @@ class Updater @Inject constructor(
     /** Hand the whole file to Android. If the switch is off, say so and wait for [resumed]. */
     fun install() {
         val s = state.value as? State.Ready ?: return
-        if (!context.packageManager.canRequestPackageInstalls()) {
+        if (!installAccess.allowed()) {
             stateFlow.value = s.copy(needsPermission = true)
             return
         }
-        val uri = FileProvider.getUriForFile(context, AUTHORITY, s.file)
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, APK_MIME)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            },
-        )
+        try {
+            val uri = FileProvider.getUriForFile(context, AUTHORITY, s.file)
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, APK_MIME)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+        } catch (e: Exception) {
+            stateFlow.value = State.Failed(s.release, "Android could not open the installer. Check this device's installation settings and try again.")
+        }
     }
 
-    /** The one-time "Install unknown apps" switch for this app, in Settings. */
+    /** Android 6/7 has a device-wide switch; Android 8+ grants access per app. */
     fun openInstallSettings() {
-        context.startActivity(
-            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
+        val s = state.value as? State.Ready ?: return
+        try {
+            try {
+                context.startActivity(installAccess.settingsIntent())
+            } catch (e: ActivityNotFoundException) {
+                context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        } catch (e: Exception) {
+            stateFlow.value = State.Failed(s.release, "Open Android Settings and allow installation from unknown sources, then try again.")
+        }
     }
 
     /** Back from Settings with the switch now on: carry on to the installer by itself. */
     fun resumed() {
         val s = state.value as? State.Ready ?: return
-        if (s.needsPermission && context.packageManager.canRequestPackageInstalls()) {
+        if (s.needsPermission && installAccess.allowed()) {
             stateFlow.value = s.copy(needsPermission = false)
             install()
         }
@@ -245,9 +259,7 @@ class Updater @Inject constructor(
     }
 
     private val json = Json { ignoreUnknownKeys = true }
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(Duration.ofSeconds(8)).readTimeout(Duration.ofSeconds(15)).callTimeout(Duration.ofSeconds(25))
-        .build()
+    private val client: OkHttpClient = UpdateTransport.client(context)
     /** The APK is tens of megabytes: a stall deadline per read, and a long one for the whole. */
     private val downloadClient: OkHttpClient = client.newBuilder()
         .readTimeout(Duration.ofSeconds(30)).callTimeout(Duration.ofMinutes(15))
@@ -277,5 +289,28 @@ class Updater @Inject constructor(
             }
             return 0
         }
+    }
+}
+
+/** Permission policy shared by installation, the settings button and return from settings. */
+internal class InstallAccess(private val context: Context) {
+    @Suppress("DEPRECATION")
+    fun allowed(): Boolean = try {
+        if (Build.VERSION.SDK_INT >= 26) context.packageManager.canRequestPackageInstalls()
+        else Settings.Secure.getInt(context.contentResolver, Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
+    } catch (e: SecurityException) {
+        false
+    }
+
+    fun settingsIntent(): Intent = (if (Build.VERSION.SDK_INT >= 26) {
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+    } else {
+        Intent(Settings.ACTION_SECURITY_SETTINGS)
+    }).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    val message: String get() = if (Build.VERSION.SDK_INT >= 26) {
+        "Android needs a one-time switch: allow Magic Bill to install updates, then come back here."
+    } else {
+        "In Android Security settings, allow Unknown sources, then come back here. This switch applies to the whole device; you can turn it off after the update."
     }
 }
